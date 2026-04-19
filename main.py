@@ -138,13 +138,12 @@ def run_analysis(mode):
         except: continue
     return pd.DataFrame(results)
 
-# 화면 구현
-tab1, tab2 = st.tabs(["⚡ 단기 스윙 (1~2주 보유)", "🌳 중기 추세 (1~3개월 보유)"])
+# 탭 구성 (주식 분석 탭 추가)
+tab1, tab2, tab3 = st.tabs(["⚡ 단기 스윙 (1~2주 보유)", "🌳 중기 추세 (1~3개월 보유)", "🔍 주식 분석 (개별 종목)"])
 
 with tab1:
     st.markdown("### 🏄‍♂️ 단기 모멘텀 파도타기")
     
-    # 단기 탭 아이콘 가이드 추가
     with st.expander("💡 단기 종목 아이콘 가이드 펼쳐보기"):
         st.markdown("""
         * **🔥 불꽃 (강력 매수):** 거래량 폭발, 밴드 돌파 등 단기 급등 에너지가 충만한 상태입니다.
@@ -192,7 +191,6 @@ with tab2:
     st.markdown("### 🌳 중기 실적/추세 따라가기")
     st.info("💡 **중기 투자 전략:** 주가가 60일(실적선) 위에 있는 종목이 지지받을 때 진입하며, 120일(반기선) 이탈 시 손절합니다.")
     
-    # 중기 탭 아이콘 가이드 추가
     with st.expander("💡 중기 종목 아이콘 가이드 펼쳐보기"):
         st.markdown("""
         * **⭐ 황금별 (중기 최우량):** 60/120일선 위에서 굳건히 버티는 대장주입니다. 조정 시 모아가기 가장 좋습니다.
@@ -236,3 +234,97 @@ with tab2:
                             st.markdown(f"🛒 **매수:** `{int(s['buy']):,}원`")
                             st.markdown(f"🎯 **목표:** `{int(s['target']):,}원`")
                             st.caption(s['desc'])
+
+with tab3:
+    st.markdown("### 🔍 AI 개별 종목 정밀 진단")
+    st.info("궁금한 주식의 종목명(예: 삼성전자) 또는 종목코드(005930)를 입력하고 엔터를 눌러주세요.")
+    
+    query = st.text_input("종목명 검색", "").strip()
+    
+    if query:
+        names_dict = get_krx_names()
+        target_code = ""
+        
+        # 입력값이 코드인지 이름인지 판별
+        if query.isdigit() and query in names_dict:
+            target_code = query
+        else:
+            for c, n in names_dict.items():
+                if query == n:
+                    target_code = c
+                    break
+        
+        if target_code:
+            stock_name = names_dict[target_code]
+            with st.spinner(f"AI가 '{stock_name}'의 과거 데이터를 스캐닝 중입니다..."):
+                start_date = (datetime.now() - timedelta(days=250)).strftime('%Y-%m-%d')
+                df = fdr.DataReader(target_code, start_date)
+                
+                if len(df) > 120:
+                    # 필요한 모든 보조지표 계산
+                    df['MA20'] = df['Close'].rolling(window=20).mean()
+                    df['MA60'] = df['Close'].rolling(window=60).mean()
+                    df['MA120'] = df['Close'].rolling(window=120).mean()
+                    df['High_6M'] = df['Close'].rolling(window=120).max()
+                    
+                    delta = df['Close'].diff()
+                    gain = delta.clip(lower=0).ewm(com=13, adjust=False).mean()
+                    loss = (-delta.clip(upper=0)).ewm(com=13, adjust=False).mean()
+                    df['RSI'] = 100 - (100 / (1 + gain / (loss + 1e-10)))
+                    
+                    df = df.dropna()
+                    if not df.empty:
+                        last = df.iloc[-1]
+                        curr_price = last['Close']
+                        ma60 = last['MA60']
+                        ma120 = last['MA120']
+                        rsi = last['RSI']
+                        high_6m = last['High_6M']
+                        
+                        # Valuation (가격 상태 진단) 로직
+                        if rsi > 70 or curr_price > ma120 * 1.2:
+                            valuation_text = "🔴 매우 고평가 (단기 과열 구간)"
+                            val_color = "error"
+                        elif rsi < 35 or curr_price < ma120 * 0.95:
+                            valuation_text = "🟢 매우 저평가 (바닥권 및 할인 구간)"
+                            val_color = "success"
+                        else:
+                            valuation_text = "🟡 적정 가격 (추세 추종 구간)"
+                            val_color = "warning"
+                            
+                        st.divider()
+                        col_a, col_b = st.columns(2)
+                        
+                        with col_a:
+                            st.subheader(f"📊 {stock_name} 진단 리포트")
+                            st.metric("현재가", f"{int(curr_price):,}원")
+                            
+                            if val_color == "error": st.error(f"**가격 상태:** {valuation_text}")
+                            elif val_color == "success": st.success(f"**가격 상태:** {valuation_text}")
+                            else: st.warning(f"**가격 상태:** {valuation_text}")
+                            
+                            st.write("---")
+                            st.write(f"**⚡ 단기 에너지 (1~2주):** " + ("매우 강함 (상승 모멘텀)" if rsi >= 60 else "약함 (하락 및 조정)" if rsi <= 40 else "보통 (방향성 탐색)"))
+                            st.write(f"**🌳 중기 추세 (1~3개월):** " + ("상승 추세 진행 중" if curr_price > ma60 else "하락 추세 진행 중"))
+                            st.write(f"**🎯 6개월 고점 대비:** {((curr_price/high_6m)-1)*100:.1f}% 위치")
+
+                        with col_b:
+                            st.subheader("💡 AI 매매 종합 의견")
+                            if rsi > 70:
+                                st.markdown("⚠️ **투자 주의:** 현재 심리적 과열 상태입니다. 신규 매수보다는 분할 매도를 통해 수익을 챙기는 것을 권장합니다.")
+                            elif curr_price > ma60 and rsi > 50:
+                                st.markdown("✅ **매수 추천:** 추세가 튼튼하게 살아있습니다. 20일선이나 60일선까지 눌림목이 올 때 분할 매수로 접근하세요.")
+                            elif curr_price < ma120:
+                                st.markdown("🛑 **관망 권장:** 장기 이평선(120일) 아래로 주가가 내려간 역배열 상태입니다. 섣부른 물타기보다는 추세 회복을 기다리세요.")
+                            else:
+                                st.markdown("🧐 **중립:** 주가가 방향성을 고민하고 있는 구간입니다. 확실한 거래량이 터질 때까지 지켜보는 것이 좋습니다.")
+                            
+                            st.write("---")
+                            st.markdown(f"🛒 **AI 권장 매수가:** `{int(ma60):,}원` 부근 (60일 지지선)")
+                            st.markdown(f"🎯 **AI 1차 목표가:** `{int(high_6m):,}원` (전고점 탈환 시)")
+                    else:
+                        st.error("데이터 계산 중 오류가 발생했습니다. (최근 상장된 종목일 수 있습니다.)")
+                else:
+                    st.error("상장된 지 얼마 되지 않아 120일 이상의 충분한 데이터가 없습니다.")
+        else:
+            st.error("입력하신 종목을 찾을 수 없습니다. 이름(예: 삼성전자)이나 코드(예: 005930)를 정확히 입력해 주세요.")
