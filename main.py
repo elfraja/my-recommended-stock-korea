@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 st.set_page_config(page_title="K-증시 중단기 주식 비서", layout="wide")
 st.title("⚖️ K-증시 실전 매매 비서")
-st.caption("1~2주 단기 스윙과 1~3개월 중기 보유에 최적화된 한국 시장 맞춤형 퀀트입니다.")
+st.caption("1-2주 단기 스윙과 1-3개월 중기 보유에 최적화된 한국 시장 맞춤형 퀀트입니다.")
 
 k_sectors = {
     "반도체": {"etf": "091160", "stocks": ["005930", "000660", "042700"]},
