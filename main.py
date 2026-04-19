@@ -53,19 +53,16 @@ def calc_short_term_factors(df):
     return df.dropna()
 
 def calc_mid_term_factors(df):
-    """한국 시장 1~3개월 보유에 최적화된 60일/120일선 기준 지표"""
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['MA60'] = df['Close'].rolling(window=60).mean()
     df['MA120'] = df['Close'].rolling(window=120).mean()
-    df['High_6M'] = df['Close'].rolling(window=120).max() # 6개월 최고가
+    df['High_6M'] = df['Close'].rolling(window=120).max()
     return df.dropna()
 
 @st.cache_data(ttl=3600)
 def run_analysis(mode):
     results = []
     names = get_krx_names()
-    
-    # 단기는 100일, 중기는 250일(약 1년) 데이터를 가져와 계산 오류를 방지합니다.
     days_to_fetch = 100 if mode == "short" else 250
     start_date = (datetime.now() - timedelta(days=days_to_fetch)).strftime('%Y-%m-%d')
     
@@ -98,7 +95,7 @@ def run_analysis(mode):
                     if last['MACD'] > last['Signal']: score += 20; msg.append("추세 상승")
                     desc = " | ".join(msg) if msg else "모멘텀 대기"
 
-                else: # 중기 스윙 모드
+                else:
                     s_df = calc_mid_term_factors(raw_df)
                     if s_df.empty: continue
                     last = s_df.iloc[-1]
@@ -108,11 +105,9 @@ def run_analysis(mode):
                     high6m = last['High_6M']
                     
                     drawdown = ((current - high6m) / high6m) * 100
-                    
-                    # 중기 매매 타점 로직 (60일선 지지 기반)
                     buy_price = ma60 if current > ma60 else current
                     target_price = high6m if high6m > current * 1.05 else current * 1.2
-                    stop_loss = ma120 * 0.95 # 120일 반기선 이탈 시 손절
+                    stop_loss = ma120 * 0.95
                     
                     score = 0
                     msg = []
@@ -148,6 +143,15 @@ tab1, tab2 = st.tabs(["⚡ 단기 스윙 (1~2주 보유)", "🌳 중기 추세 (
 
 with tab1:
     st.markdown("### 🏄‍♂️ 단기 모멘텀 파도타기")
+    
+    # 단기 탭 아이콘 가이드 추가
+    with st.expander("💡 단기 종목 아이콘 가이드 펼쳐보기"):
+        st.markdown("""
+        * **🔥 불꽃 (강력 매수):** 거래량 폭발, 밴드 돌파 등 단기 급등 에너지가 충만한 상태입니다.
+        * **🟢 초록불 (매수 진입):** 에너지가 안정적으로 모이며 상승 추세를 시작한 건강한 종목입니다.
+        * **⚪ 흰색불 (관망):** 에너지가 부족하거나 잠시 쉬어가는 중이니 매수 타이밍을 기다리세요.
+        """)
+        
     with st.spinner('1~2주 보유를 위한 단기 매매 타점을 계산 중입니다...'):
         short_df = run_analysis("short")
         
@@ -188,6 +192,14 @@ with tab2:
     st.markdown("### 🌳 중기 실적/추세 따라가기")
     st.info("💡 **중기 투자 전략:** 주가가 60일(실적선) 위에 있는 종목이 지지받을 때 진입하며, 120일(반기선) 이탈 시 손절합니다.")
     
+    # 중기 탭 아이콘 가이드 추가
+    with st.expander("💡 중기 종목 아이콘 가이드 펼쳐보기"):
+        st.markdown("""
+        * **⭐ 황금별 (중기 최우량):** 60/120일선 위에서 굳건히 버티는 대장주입니다. 조정 시 모아가기 가장 좋습니다.
+        * **🌱 새싹 (성장 준비):** 추세는 살아있으나 고점 대비 할인 중입니다. 60일선 지지 시 좋은 타점이 됩니다.
+        * **⚠️ 경고 (매수 금지):** 60/120일선 아래로 무너져 내린 종목입니다. 떨어지는 칼날이니 피하세요.
+        """)
+        
     with st.spinner('수개월 보유를 위한 60일/120일선 추세를 분석 중입니다...'):
         mid_df = run_analysis("mid")
         
