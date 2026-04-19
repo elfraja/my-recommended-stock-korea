@@ -80,7 +80,7 @@ def calc_factors(df):
 def get_ai_insight(name, data_summary):
     """제미나이 AI에게 종목 분석 요청"""
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         prompt = f"""
         당신은 대한민국 최고의 주식 투자 전략가입니다. 
         '{name}' 종목의 최근 데이터는 다음과 같습니다:
