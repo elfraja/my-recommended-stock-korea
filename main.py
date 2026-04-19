@@ -3,12 +3,10 @@ import FinanceDataReader as fdr
 import pandas as pd
 from datetime import datetime, timedelta
 
-# 1. 앱 설정
-st.set_page_config(page_title="AI 하이브리드 주식 비서", layout="wide")
-st.title("⚖️ AI 하이브리드 주식 비서")
-st.caption("단기 모멘텀 파도타기와 장기 대세선 투자를 모두 지원하는 통합 분석기입니다.")
+st.set_page_config(page_title="K-증시 중단기 주식 비서", layout="wide")
+st.title("⚖️ K-증시 실전 매매 비서")
+st.caption("1~2주 단기 스윙과 1~3개월 중기 보유에 최적화된 한국 시장 맞춤형 퀀트입니다.")
 
-# 20대 핵심 테마
 k_sectors = {
     "반도체": {"etf": "091160", "stocks": ["005930", "000660", "042700"]},
     "2차전지소재": {"etf": "373550", "stocks": ["247540", "391060", "003670"]},
@@ -38,7 +36,6 @@ def get_krx_names():
     return dict(zip(df['Code'], df['Name']))
 
 def calc_short_term_factors(df):
-    """단기 매매용 5-Factor 지표"""
     df['MA5'] = df['Close'].rolling(window=5).mean()
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['MA60'] = df['Close'].rolling(window=60).mean()
@@ -55,20 +52,21 @@ def calc_short_term_factors(df):
     df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
     return df.dropna()
 
-def calc_long_term_factors(df):
-    """장기 보유용 지표 (대세선 및 52주 최고가)"""
+def calc_mid_term_factors(df):
+    """한국 시장 1~3개월 보유에 최적화된 60일/120일선 기준 지표"""
+    df['MA20'] = df['Close'].rolling(window=20).mean()
     df['MA60'] = df['Close'].rolling(window=60).mean()
     df['MA120'] = df['Close'].rolling(window=120).mean()
-    df['MA200'] = df['Close'].rolling(window=200).mean()
-    df['High_52W'] = df['Close'].rolling(window=250).max() # 약 1년(250거래일) 최고가
+    df['High_6M'] = df['Close'].rolling(window=120).max() # 6개월 최고가
     return df.dropna()
 
 @st.cache_data(ttl=3600)
 def run_analysis(mode):
     results = []
     names = get_krx_names()
-    # 단기는 120일치 데이터, 장기는 200일선 계산을 위해 365일치 데이터 수집
-    days_to_fetch = 120 if mode == "short" else 365
+    
+    # 단기는 100일, 중기는 250일(약 1년) 데이터를 가져와 계산 오류를 방지합니다.
+    days_to_fetch = 100 if mode == "short" else 250
     start_date = (datetime.now() - timedelta(days=days_to_fetch)).strftime('%Y-%m-%d')
     
     for name, info in k_sectors.items():
@@ -79,52 +77,52 @@ def run_analysis(mode):
             
             for s_code in info['stocks']:
                 raw_df = fdr.DataReader(s_code, start_date)
-                if len(raw_df) < (60 if mode == "short" else 200): continue
+                if len(raw_df) < (65 if mode == "short" else 130): continue
                 
                 if mode == "short":
                     s_df = calc_short_term_factors(raw_df)
+                    if s_df.empty: continue
                     last = s_df.iloc[-1]
                     current = last['Close']
+                    
                     buy_price = current if current <= last['MA20'] else (current + last['MA20']) / 2
-                    target_price = last['BB_Upper'] if last['BB_Upper'] > current else current * 1.05
+                    target_price = last['BB_Upper'] if last['BB_Upper'] > current else current * 1.07
                     stop_loss = max(last['MA60'], current * 0.95)
                     
                     score = 0
                     msg = []
                     if last['MA5'] > last['MA20'] > last['MA60']: score += 20; msg.append("정배열")
-                    if 50 <= last['RSI'] <= 70: score += 20; msg.append("에너지 안정")
+                    if 50 <= last['RSI'] <= 70: score += 20; msg.append("안정적 에너지")
                     if current > last['BB_Upper']: score += 20; msg.append("밴드 돌파")
                     if last['Vol_Ratio'] > 1.5: score += 20; msg.append("수급 폭발")
                     if last['MACD'] > last['Signal']: score += 20; msg.append("추세 상승")
                     desc = " | ".join(msg) if msg else "모멘텀 대기"
 
-                else: # 장기 모드
-                    s_df = calc_long_term_factors(raw_df)
+                else: # 중기 스윙 모드
+                    s_df = calc_mid_term_factors(raw_df)
+                    if s_df.empty: continue
                     last = s_df.iloc[-1]
                     current = last['Close']
+                    ma60 = last['MA60']
                     ma120 = last['MA120']
-                    ma200 = last['MA200']
-                    high52 = last['High_52W']
+                    high6m = last['High_6M']
                     
-                    # 52주 고점 대비 하락률
-                    drawdown = ((current - high52) / high52) * 100
+                    drawdown = ((current - high6m) / high6m) * 100
                     
-                    # 장기 매수가: 200일선이나 120일선 부근에서 줍기
-                    buy_price = ma200 if current > ma200 else current
-                    # 장기 목표가: 52주 최고가 회복 또는 30% 상승
-                    target_price = high52 if high52 > current * 1.1 else current * 1.3
-                    # 장기 손절가: 200일선이 완전히 무너질 때 (-5% 여유)
-                    stop_loss = ma200 * 0.95
+                    # 중기 매매 타점 로직 (60일선 지지 기반)
+                    buy_price = ma60 if current > ma60 else current
+                    target_price = high6m if high6m > current * 1.05 else current * 1.2
+                    stop_loss = ma120 * 0.95 # 120일 반기선 이탈 시 손절
                     
                     score = 0
                     msg = []
-                    if current > ma200: score += 40; msg.append("장기 대세선(200일) 유지")
-                    else: msg.append("장기 역배열 주의")
+                    if current > ma60: score += 40; msg.append("60일(실적선) 유지")
+                    else: msg.append("60일선 저항 주의")
                     
-                    if ma120 > ma200: score += 30; msg.append("중장기 정배열 우상향")
+                    if ma60 > ma120: score += 30; msg.append("중기 정배열 우상향")
                     
-                    if drawdown < -20 and current > ma200: score += 30; msg.append("고점대비 20% 할인(안전마진)")
-                    elif drawdown >= -10: msg.append("신고가 돌파 시도")
+                    if drawdown < -15 and current > ma120: score += 30; msg.append("고점대비 15% 할인")
+                    elif drawdown >= -5: score += 10; msg.append("6개월 신고가 돌파 시도")
                     
                     desc = " + ".join(msg)
 
@@ -136,61 +134,93 @@ def run_analysis(mode):
                     "stop": stop_loss,
                     "score": score,
                     "desc": desc,
-                    "extra": drawdown if mode == "long" else None
+                    "extra": drawdown if mode == "mid" else None
                 })
                 
             if stock_data:
-                # 섹터 점수는 종목 점수 평균으로 계산
                 sector_score = sum([s['score'] for s in stock_data]) / len(stock_data)
                 results.append({"섹터명": name, "5일수익률": perf_5d, "score": sector_score, "stocks": stock_data})
         except: continue
     return pd.DataFrame(results)
 
-# 3. 화면 UI 구성 (두 개의 탭)
-tab1, tab2 = st.tabs(["⚡ 단기 트레이딩 모드 (Swing)", "🛡️ 장기 가치투자 모드 (Buy & Hold)"])
+# 화면 구현
+tab1, tab2 = st.tabs(["⚡ 단기 스윙 (1~2주 보유)", "🌳 중기 추세 (1~3개월 보유)"])
 
 with tab1:
-    st.markdown("### 🏄‍♂️ 단기 파도타기: 수급과 모멘텀 중심")
-    with st.spinner('단기 매매 최적 타점을 계산 중입니다...'):
+    st.markdown("### 🏄‍♂️ 단기 모멘텀 파도타기")
+    with st.spinner('1~2주 보유를 위한 단기 매매 타점을 계산 중입니다...'):
         short_df = run_analysis("short")
         
     if not short_df.empty:
-        top_short = short_df.sort_values(by='score', ascending=False).head(3)
-        cols = st.columns(3)
-        for i, (idx, row) in enumerate(top_short.iterrows()):
-            with cols[i]:
-                st.info(f"🏆 {i+1}위: {row['섹터명']}")
-                for s in sorted(row['stocks'], key=lambda x: x['score'], reverse=True):
-                    icon = "🔥" if s['score'] >= 80 else "🟢" if s['score'] >= 60 else "⚪"
-                    with st.expander(f"{icon} {s['name']}"):
-                        st.write(f"현재가: {int(s['current']):,}원")
-                        st.markdown(f"📉 **추천 매수:** `{int(s['buy']):,}원`")
-                        st.markdown(f"🎯 **단기 목표:** `{int(s['target']):,}원`")
-                        st.markdown(f"🛑 **칼 손절가:** `{int(s['stop']):,}원`")
-                        st.caption(f"사유: {s['desc']}")
+        top_7_short = short_df.sort_values(by='score', ascending=False).head(7)
+        st.subheader("🏆 집중 공략 섹터 (1~3위)")
+        cols1 = st.columns(3)
+        for i in range(3):
+            if i < len(top_7_short):
+                row = top_7_short.iloc[i]
+                with cols1[i]:
+                    st.info(f"### {i+1}위: {row['섹터명']}")
+                    for s in sorted(row['stocks'], key=lambda x: x['score'], reverse=True):
+                        icon = "🔥" if s['score'] >= 80 else "🟢" if s['score'] >= 60 else "⚪"
+                        with st.expander(f"{icon} {s['name']}"):
+                            st.write(f"현재가: {int(s['current']):,}원")
+                            st.markdown(f"📉 **매수:** `{int(s['buy']):,}원`")
+                            st.markdown(f"🎯 **목표:** `{int(s['target']):,}원`")
+                            st.markdown(f"🛑 **손절:** `{int(s['stop']):,}원`")
+                            st.caption(s['desc'])
+        
+        st.divider()
+        st.subheader("🔍 추격 매수 가능 섹터 (4~7위)")
+        cols2 = st.columns(4)
+        for i in range(3, 7):
+            if i < len(top_7_short):
+                row = top_7_short.iloc[i]
+                with cols2[i-3]:
+                    st.success(f"**{i+1}위: {row['섹터명']}**")
+                    for s in sorted(row['stocks'], key=lambda x: x['score'], reverse=True):
+                        icon = "🟢" if s['score'] >= 60 else "⚪"
+                        with st.expander(f"{icon} {s['name']}"):
+                            st.markdown(f"📉 **매수:** `{int(s['buy']):,}원`")
+                            st.markdown(f"🎯 **목표:** `{int(s['target']):,}원`")
+                            st.caption(s['desc'])
 
 with tab2:
-    st.markdown("### 🌳 장기 나무심기: 대세선과 할인율 중심")
-    st.info("💡 **장기 투자 전략:** 주가가 200일선(대세선) 위에 있는 건강한 종목이 120/200일선 부근으로 조정을 받을 때 분할 매수합니다.")
+    st.markdown("### 🌳 중기 실적/추세 따라가기")
+    st.info("💡 **중기 투자 전략:** 주가가 60일(실적선) 위에 있는 종목이 지지받을 때 진입하며, 120일(반기선) 이탈 시 손절합니다.")
     
-    with st.spinner('1년치 데이터를 바탕으로 장기 대세선과 안전마진을 분석 중입니다...'):
-        long_df = run_analysis("long")
+    with st.spinner('수개월 보유를 위한 60일/120일선 추세를 분석 중입니다...'):
+        mid_df = run_analysis("mid")
         
-    if not long_df.empty:
-        # 장기 모드는 점수(대세선 유지)가 높은 섹터를 보여줍니다.
-        top_long = long_df.sort_values(by='score', ascending=False).head(3)
-        cols2 = st.columns(3)
-        for i, (idx, row) in enumerate(top_long.iterrows()):
-            with cols2[i]:
-                st.success(f"🛡️ 우량 섹터: {row['섹터명']}")
-                for s in sorted(row['stocks'], key=lambda x: x['score'], reverse=True):
-                    icon = "⭐" if s['score'] >= 70 else "🌱" if s['score'] >= 40 else "⚠️"
-                    with st.expander(f"{icon} {s['name']}"):
-                        st.write(f"현재가: {int(s['current']):,}원")
-                        st.write(f"최고점 대비: **{s['extra']:.1f}%**")
-                        st.write("---")
-                        st.markdown(f"🛒 **적립식 매수가:** `{int(s['buy']):,}원` 이하에서 줍기")
-                        st.markdown(f"🎯 **장기 목표가:** `{int(s['target']):,}원`")
-                        st.markdown(f"🛑 **추세 붕괴(손절):** `{int(s['stop']):,}원` 이탈 시")
-                        st.write("---")
-                        st.caption(f"상태: {s['desc']}")
+    if not mid_df.empty:
+        top_7_mid = mid_df.sort_values(by='score', ascending=False).head(7)
+        st.subheader("🛡️ 중기 우량 섹터 (1~3위)")
+        cols3 = st.columns(3)
+        for i in range(3):
+            if i < len(top_7_mid):
+                row = top_7_mid.iloc[i]
+                with cols3[i]:
+                    st.success(f"### {i+1}위: {row['섹터명']}")
+                    for s in sorted(row['stocks'], key=lambda x: x['score'], reverse=True):
+                        icon = "⭐" if s['score'] >= 70 else "🌱" if s['score'] >= 40 else "⚠️"
+                        with st.expander(f"{icon} {s['name']}"):
+                            st.write(f"현재가: {int(s['current']):,}원")
+                            st.write(f"6개월 고점대비: **{s['extra']:.1f}%**")
+                            st.markdown(f"🛒 **매수(60일선 부근):** `{int(s['buy']):,}원`")
+                            st.markdown(f"🎯 **목표(6개월 신고가):** `{int(s['target']):,}원`")
+                            st.markdown(f"🛑 **추세 손절(120일 이탈):** `{int(s['stop']):,}원`")
+                            st.caption(s['desc'])
+                            
+        st.divider()
+        st.subheader("👀 중기 관심 섹터 (4~7위)")
+        cols4 = st.columns(4)
+        for i in range(3, 7):
+            if i < len(top_7_mid):
+                row = top_7_mid.iloc[i]
+                with cols4[i-3]:
+                    st.info(f"**{i+1}위: {row['섹터명']}**")
+                    for s in sorted(row['stocks'], key=lambda x: x['score'], reverse=True):
+                        icon = "🌱" if s['score'] >= 40 else "⚠️"
+                        with st.expander(f"{icon} {s['name']}"):
+                            st.markdown(f"🛒 **매수:** `{int(s['buy']):,}원`")
+                            st.markdown(f"🎯 **목표:** `{int(s['target']):,}원`")
+                            st.caption(s['desc'])
