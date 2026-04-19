@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import difflib
 import google.generativeai as genai
 
+
 # 1. 앱 설정
 st.set_page_config(page_title="K-증시 AI 하이브리드 비서", layout="wide")
 st.title("⚖️ K-증시 실전 매매 비서 with Gemini AI")
