@@ -3,18 +3,13 @@ import FinanceDataReader as fdr
 import pandas as pd
 from datetime import datetime, timedelta
 import difflib
-import google.generativeai as genai # 제미나이 로드
+import google.generativeai as genai
 
 # 1. 앱 설정
 st.set_page_config(page_title="K-증시 AI 하이브리드 비서", layout="wide")
 st.title("⚖️ K-증시 실전 매매 비서 with Gemini AI")
 
-# --- [보안 팁] API 키 설정 ---
-# 깃허브에 직접 키를 적으면 위험하므로, 나중에 스트림릿 설정에서 넣는 방식을 권장하지만
-# 우선 작동 확인을 위해 아래 주석 부분에 키를 넣어 테스트해보세요.
-# genai.configure(api_key="여기에_발급받은_API키를_넣으세요")
-
-# 만약 스트림릿 Secrets를 사용한다면 아래 코드를 씁니다.
+# --- Gemini API 키 설정 ---
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
@@ -49,7 +44,14 @@ def get_krx_names():
 def normalize_string(s):
     if not s: return ""
     s = str(s).lower().replace(" ", "")
-    replace_dict = {"lg": "엘지", "sk": "에스케이", "cj": "씨제이", "kt": "케이티", "kakao": "카카오", "naver": "네이버", "pay": "페이", "bank": "뱅크"}
+    replace_dict = {
+        "lg": "엘지", "sk": "에스케이", "cj": "씨제이", "kt": "케이티",
+        "hd": "에이치디", "kb": "케이비", "ls": "엘에스", "kg": "케이지",
+        "hl": "에이치엘", "gs": "지에스", "kakao": "카카오", "naver": "네이버", 
+        "samsung": "삼성", "hyundai": "현대", "posco": "포스코", "hanwha": "한화", 
+        "lotte": "롯데", "doosan": "두산", "celltrion": "셀트리온",
+        "pay": "페이", "bank": "뱅크"
+    }
     for eng, kor in replace_dict.items(): s = s.replace(eng, kor)
     return s
 
@@ -66,6 +68,30 @@ def smart_search_stock(query, names_dict):
             if norm_name == closest_matches[0]: return code
     return None
 
+def calc_short_term_factors(df):
+    df['MA5'] = df['Close'].rolling(window=5).mean()
+    df['MA20'] = df['Close'].rolling(window=20).mean()
+    df['MA60'] = df['Close'].rolling(window=60).mean()
+    delta = df['Close'].diff()
+    gain = delta.clip(lower=0).ewm(com=13, adjust=False).mean()
+    loss = (-delta.clip(upper=0)).ewm(com=13, adjust=False).mean()
+    df['RSI'] = 100 - (100 / (1 + gain / (loss + 1e-10)))
+    df['STD20'] = df['Close'].rolling(window=20).std()
+    df['BB_Upper'] = df['MA20'] + (df['STD20'] * 2)
+    df['Vol_Ratio'] = df['Volume'] / df['Volume'].rolling(20).mean()
+    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
+    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = exp1 - exp2
+    df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    return df.dropna()
+
+def calc_mid_term_factors(df):
+    df['MA20'] = df['Close'].rolling(window=20).mean()
+    df['MA60'] = df['Close'].rolling(window=60).mean()
+    df['MA120'] = df['Close'].rolling(window=120).mean()
+    df['High_6M'] = df['Close'].rolling(window=120).max()
+    return df.dropna()
+
 def calc_factors(df):
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['MA60'] = df['Close'].rolling(window=60).mean()
@@ -77,68 +103,103 @@ def calc_factors(df):
     df['High_6M'] = df['Close'].rolling(window=120).max()
     return df.dropna()
 
+@st.cache_data(ttl=3600)
+def run_analysis(mode):
+    results = []
+    names = get_krx_names()
+    days_to_fetch = 100 if mode == "short" else 250
+    start_date = (datetime.now() - timedelta(days=days_to_fetch)).strftime('%Y-%m-%d')
+    
+    for name, info in k_sectors.items():
+        try:
+            etf_df = fdr.DataReader(info['etf'], start_date)
+            perf_5d = ((etf_df['Close'].iloc[-1] / etf_df['Close'].iloc[-5]) - 1) * 100
+            stock_data = []
+            
+            for s_code in info['stocks']:
+                raw_df = fdr.DataReader(s_code, start_date)
+                if len(raw_df) < (65 if mode == "short" else 130): continue
+                
+                if mode == "short":
+                    s_df = calc_short_term_factors(raw_df)
+                    if s_df.empty: continue
+                    last = s_df.iloc[-1]
+                    current = last['Close']
+                    buy_price = current if current <= last['MA20'] else (current + last['MA20']) / 2
+                    target_price = last['BB_Upper'] if last['BB_Upper'] > current else current * 1.07
+                    stop_loss = max(last['MA60'], current * 0.95)
+                    
+                    score = 0
+                    msg = []
+                    if last['MA5'] > last['MA20'] > last['MA60']: score += 20; msg.append("정배열")
+                    if 50 <= last['RSI'] <= 70: score += 20; msg.append("안정적 에너지")
+                    if current > last['BB_Upper']: score += 20; msg.append("밴드 돌파")
+                    if last['Vol_Ratio'] > 1.5: score += 20; msg.append("수급 폭발")
+                    if last['MACD'] > last['Signal']: score += 20; msg.append("추세 상승")
+                    desc = " | ".join(msg) if msg else "모멘텀 대기"
+
+                else:
+                    s_df = calc_mid_term_factors(raw_df)
+                    if s_df.empty: continue
+                    last = s_df.iloc[-1]
+                    current = last['Close']
+                    ma60 = last['MA60']
+                    ma120 = last['MA120']
+                    high6m = last['High_6M']
+                    
+                    drawdown = ((current - high6m) / high6m) * 100
+                    buy_price = ma60 if current > ma60 else current
+                    target_price = high6m if high6m > current * 1.05 else current * 1.2
+                    stop_loss = ma120 * 0.95
+                    
+                    score = 0
+                    msg = []
+                    if current > ma60: score += 40; msg.append("60일(실적선) 유지")
+                    else: msg.append("60일선 저항 주의")
+                    if ma60 > ma120: score += 30; msg.append("중기 정배열 우상향")
+                    if drawdown < -15 and current > ma120: score += 30; msg.append("고점대비 15% 할인")
+                    elif drawdown >= -5: score += 10; msg.append("6개월 신고가 돌파 시도")
+                    desc = " + ".join(msg)
+
+                stock_data.append({
+                    "name": names.get(s_code, s_code),
+                    "current": current,
+                    "buy": buy_price,
+                    "target": target_price,
+                    "stop": stop_loss,
+                    "score": score,
+                    "desc": desc,
+                    "extra": drawdown if mode == "mid" else None
+                })
+                
+            if stock_data:
+                sector_score = sum([s['score'] for s in stock_data]) / len(stock_data)
+                results.append({"섹터명": name, "5일수익률": perf_5d, "score": sector_score, "stocks": stock_data})
+        except: continue
+    return pd.DataFrame(results)
+
 def get_ai_insight(name, data_summary):
     """제미나이 AI에게 종목 분석 요청"""
     try:
+        # 구형 모델명 변경: gemini-1.5-flash -> gemini-2.5-flash
         model = genai.GenerativeModel('gemini-2.5-flash')
         prompt = f"""
         당신은 대한민국 최고의 주식 투자 전략가입니다. 
-        '{name}' 종목의 최근 데이터는 다음과 같습니다:
+        '{name}' 종목의 최근 기술적 지표 상태는 다음과 같습니다:
         {data_summary}
         
         이 데이터를 바탕으로 투자자가 참고할 만한 핵심 인사이트를 딱 3줄로 요약해서 말해주세요. 
-        어투는 '전문가적인 조언' 느낌으로 해주세요.
+        어투는 친절하면서도 객관적인 '전문가 조언' 느낌으로 해주세요.
         """
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
         return f"AI 분석을 불러오지 못했습니다. (사유: {str(e)})"
 
-# --- 화면 구현 ---
+# ====== 화면 렌더링 시작 ======
 tab1, tab2, tab3 = st.tabs(["⚡ 단기 스윙", "🌳 중기 추세", "🔍 AI 종목 진단"])
 
-# (1, 2탭 생략 - 이전과 동일한 로직)
-
-with tab3:
-    st.markdown("### 🔍 AI 개별 종목 정밀 진단")
-    query = st.text_input("종목명 또는 코드를 입력하세요:", "").strip()
-    
-    if query:
-        names_dict = get_krx_names()
-        target_code = smart_search_stock(query, names_dict)
-        
-        if target_code:
-            stock_name = names_dict[target_code]
-            with st.spinner(f"AI가 {stock_name}의 차트와 수급을 정밀 분석 중..."):
-                start_date = (datetime.now() - timedelta(days=250)).strftime('%Y-%m-%d')
-                df = fdr.DataReader(target_code, start_date)
-                
-                if len(df) > 120:
-                    df = calc_factors(df)
-                    last = df.iloc[-1]
-                    
-                    # 데이터 요약 (AI에게 보낼 내용)
-                    stats = {
-                        "현재가": f"{int(last['Close']):,}원",
-                        "RSI(강도)": f"{last['RSI']:.1f}",
-                        "60일선 대비": "위" if last['Close'] > last['MA60'] else "아래",
-                        "전고점 대비": f"{((last['Close']/last['High_6M'])-1)*100:.1f}%"
-                    }
-                    
-                    # 화면 출력
-                    st.divider()
-                    col1, col2 = st.columns([1, 1.2])
-                    
-                    with col1:
-                        st.subheader(f"📊 {stock_name} 기술적 지표")
-                        st.metric("현재가", stats["현재가"])
-                        st.write(f"**RSI 지수:** {stats['RSI(강도)']}")
-                        st.write(f"**추세 상태:** 60일선 {stats['60일선 대비']}")
-                        st.markdown(f"📉 **추천 매수:** `{int(last['MA60']):,}원` 부근")
-                        st.markdown(f"🎯 **목표가:** `{int(last['High_6M']):,}원`")
-
-                    with col2:
-                        st.subheader("🤖 Gemini AI의 전문 의견")
-                        insight = get_ai_insight(stock_name, str(stats))
-                        st.write(insight)
-                        st.caption("※ 본 분석은 AI의 견해이며 투자 판단의 책임은 본인에게 있습니다.")
+with tab1:
+    st.markdown("### 🏄‍♂️ 단기 모멘텀 파도타기")
+    with st.expander("💡 단기 종목 아이콘 가이드 펼쳐보기"):
+        st.markdown("* **🔥 불꽃:** 초강력 매수 구간 (거래량 폭발, 돌파)\n* **🟢 초록불:** 매수 진입 구간 (안
