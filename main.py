@@ -2,10 +2,11 @@ import streamlit as st
 import FinanceDataReader as fdr
 import pandas as pd
 from datetime import datetime, timedelta
+import difflib # 유사도 검색을 위한 파이썬 내장 라이브러리 추가
 
 st.set_page_config(page_title="K-증시 중단기 주식 비서", layout="wide")
 st.title("⚖️ K-증시 실전 매매 비서")
-st.caption("1-2주 단기 스윙과 1-3개월 중기 보유에 최적화된 한국 시장 맞춤형 퀀트입니다.")
+st.caption("1~2주 단기 스윙과 1~3개월 중기 보유에 최적화된 한국 시장 맞춤형 퀀트입니다.")
 
 k_sectors = {
     "반도체": {"etf": "091160", "stocks": ["005930", "000660", "042700"]},
@@ -34,6 +35,48 @@ k_sectors = {
 def get_krx_names():
     df = fdr.StockListing('KRX')
     return dict(zip(df['Code'], df['Name']))
+
+# --- 스마트 검색을 위한 문자열 정규화 함수 ---
+def normalize_string(s):
+    if not s: return ""
+    s = str(s).lower().replace(" ", "")
+    # 한국 증시에 자주 쓰이는 영문-한글 변환 사전
+    replace_dict = {
+        "lg": "엘지", "sk": "에스케이", "cj": "씨제이", "kt": "케이티",
+        "hd": "에이치디", "kb": "케이비", "ls": "엘에스", "kg": "케이지",
+        "hl": "에이치엘", "gs": "지에스"
+    }
+    for eng, kor in replace_dict.items():
+        s = s.replace(eng, kor)
+    return s
+
+def smart_search_stock(query, names_dict):
+    """오타와 영문/한글 혼용을 잡아내는 스마트 검색기"""
+    # 1. 숫자(코드)로 바로 검색한 경우
+    if query.isdigit() and query in names_dict:
+        return query
+        
+    query_norm = normalize_string(query)
+    
+    # 정규화된 종목명 딕셔너리 생성 (비교용)
+    norm_dict = {code: normalize_string(name) for code, name in names_dict.items()}
+    
+    # 2. 정규화 후 100% 일치하는지 확인 (예: lg cns -> 엘지씨엔에스 == 엘지씨엔에스)
+    for code, norm_name in norm_dict.items():
+        if query_norm == norm_name:
+            return code
+            
+    # 3. 100% 일치가 없다면 difflib을 사용해 가장 비슷한(유사도 60% 이상) 종목 1개 찾기 (예: 씨앤에스 -> 씨엔에스)
+    all_norm_names = list(norm_dict.values())
+    closest_matches = difflib.get_close_matches(query_norm, all_norm_names, n=1, cutoff=0.6)
+    
+    if closest_matches:
+        best_match = closest_matches[0]
+        for code, norm_name in norm_dict.items():
+            if norm_name == best_match:
+                return code
+                
+    return None # 못 찾은 경우
 
 def calc_short_term_factors(df):
     df['MA5'] = df['Close'].rolling(window=5).mean()
@@ -81,7 +124,6 @@ def run_analysis(mode):
                     if s_df.empty: continue
                     last = s_df.iloc[-1]
                     current = last['Close']
-                    
                     buy_price = current if current <= last['MA20'] else (current + last['MA20']) / 2
                     target_price = last['BB_Upper'] if last['BB_Upper'] > current else current * 1.07
                     stop_loss = max(last['MA60'], current * 0.95)
@@ -113,12 +155,9 @@ def run_analysis(mode):
                     msg = []
                     if current > ma60: score += 40; msg.append("60일(실적선) 유지")
                     else: msg.append("60일선 저항 주의")
-                    
                     if ma60 > ma120: score += 30; msg.append("중기 정배열 우상향")
-                    
                     if drawdown < -15 and current > ma120: score += 30; msg.append("고점대비 15% 할인")
                     elif drawdown >= -5: score += 10; msg.append("6개월 신고가 돌파 시도")
-                    
                     desc = " + ".join(msg)
 
                 stock_data.append({
@@ -138,22 +177,15 @@ def run_analysis(mode):
         except: continue
     return pd.DataFrame(results)
 
-# 탭 구성 (주식 분석 탭 추가)
-tab1, tab2, tab3 = st.tabs(["⚡ 단기 스윙 (1~2주 보유)", "🌳 중기 추세 (1~3개월 보유)", "🔍 주식 분석 (개별 종목)"])
+# ====== 화면 렌더링 시작 ======
+tab1, tab2, tab3 = st.tabs(["⚡ 단기 스윙 (1~2주 보유)", "🌳 중기 추세 (1~3개월 보유)", "🔍 주식 분석 (스마트 검색)"])
 
 with tab1:
     st.markdown("### 🏄‍♂️ 단기 모멘텀 파도타기")
-    
     with st.expander("💡 단기 종목 아이콘 가이드 펼쳐보기"):
-        st.markdown("""
-        * **🔥 불꽃 (강력 매수):** 거래량 폭발, 밴드 돌파 등 단기 급등 에너지가 충만한 상태입니다.
-        * **🟢 초록불 (매수 진입):** 에너지가 안정적으로 모이며 상승 추세를 시작한 건강한 종목입니다.
-        * **⚪ 흰색불 (관망):** 에너지가 부족하거나 잠시 쉬어가는 중이니 매수 타이밍을 기다리세요.
-        """)
-        
+        st.markdown("* **🔥 불꽃:** 초강력 매수 구간 (거래량 폭발, 돌파)\n* **🟢 초록불:** 매수 진입 구간 (안정적 상승 추세 시작)\n* **⚪ 흰색불:** 관망 (매수 대기)")
     with st.spinner('1~2주 보유를 위한 단기 매매 타점을 계산 중입니다...'):
         short_df = run_analysis("short")
-        
     if not short_df.empty:
         top_7_short = short_df.sort_values(by='score', ascending=False).head(7)
         st.subheader("🏆 집중 공략 섹터 (1~3위)")
@@ -171,7 +203,6 @@ with tab1:
                             st.markdown(f"🎯 **목표:** `{int(s['target']):,}원`")
                             st.markdown(f"🛑 **손절:** `{int(s['stop']):,}원`")
                             st.caption(s['desc'])
-        
         st.divider()
         st.subheader("🔍 추격 매수 가능 섹터 (4~7위)")
         cols2 = st.columns(4)
@@ -189,18 +220,10 @@ with tab1:
 
 with tab2:
     st.markdown("### 🌳 중기 실적/추세 따라가기")
-    st.info("💡 **중기 투자 전략:** 주가가 60일(실적선) 위에 있는 종목이 지지받을 때 진입하며, 120일(반기선) 이탈 시 손절합니다.")
-    
     with st.expander("💡 중기 종목 아이콘 가이드 펼쳐보기"):
-        st.markdown("""
-        * **⭐ 황금별 (중기 최우량):** 60/120일선 위에서 굳건히 버티는 대장주입니다. 조정 시 모아가기 가장 좋습니다.
-        * **🌱 새싹 (성장 준비):** 추세는 살아있으나 고점 대비 할인 중입니다. 60일선 지지 시 좋은 타점이 됩니다.
-        * **⚠️ 경고 (매수 금지):** 60/120일선 아래로 무너져 내린 종목입니다. 떨어지는 칼날이니 피하세요.
-        """)
-        
+        st.markdown("* **⭐ 황금별:** 중장기 우상향 대장주 (조정 시 매수)\n* **🌱 새싹:** 성장 준비 단계 (고점 대비 할인 중)\n* **⚠️ 경고:** 생명선(120일) 이탈 (매수 금지 및 손절)")
     with st.spinner('수개월 보유를 위한 60일/120일선 추세를 분석 중입니다...'):
         mid_df = run_analysis("mid")
-        
     if not mid_df.empty:
         top_7_mid = mid_df.sort_values(by='score', ascending=False).head(7)
         st.subheader("🛡️ 중기 우량 섹터 (1~3위)")
@@ -215,11 +238,10 @@ with tab2:
                         with st.expander(f"{icon} {s['name']}"):
                             st.write(f"현재가: {int(s['current']):,}원")
                             st.write(f"6개월 고점대비: **{s['extra']:.1f}%**")
-                            st.markdown(f"🛒 **매수(60일선 부근):** `{int(s['buy']):,}원`")
-                            st.markdown(f"🎯 **목표(6개월 신고가):** `{int(s['target']):,}원`")
-                            st.markdown(f"🛑 **추세 손절(120일 이탈):** `{int(s['stop']):,}원`")
+                            st.markdown(f"🛒 **매수(60일 부근):** `{int(s['buy']):,}원`")
+                            st.markdown(f"🎯 **목표(신고가):** `{int(s['target']):,}원`")
+                            st.markdown(f"🛑 **손절(120일 이탈):** `{int(s['stop']):,}원`")
                             st.caption(s['desc'])
-                            
         st.divider()
         st.subheader("👀 중기 관심 섹터 (4~7위)")
         cols4 = st.columns(4)
@@ -237,31 +259,26 @@ with tab2:
 
 with tab3:
     st.markdown("### 🔍 AI 개별 종목 정밀 진단")
-    st.info("궁금한 주식의 종목명(예: 삼성전자) 또는 종목코드(005930)를 입력하고 엔터를 눌러주세요.")
+    st.info("오타가 있어도, 영어를 섞어 써도 알아서 찰떡같이 찾아드립니다! (예: LGCNS, 엘지씨앤에스, 에스케이하이닉스)")
     
     query = st.text_input("종목명 검색", "").strip()
     
     if query:
         names_dict = get_krx_names()
-        target_code = ""
-        
-        # 입력값이 코드인지 이름인지 판별
-        if query.isdigit() and query in names_dict:
-            target_code = query
-        else:
-            for c, n in names_dict.items():
-                if query == n:
-                    target_code = c
-                    break
+        # [스마트 검색 적용]
+        target_code = smart_search_stock(query, names_dict)
         
         if target_code:
             stock_name = names_dict[target_code]
+            # 검색어가 변환/유사매칭 된 경우 어떤 종목을 찾았는지 알려줌
+            if query != stock_name and query != target_code:
+                st.success(f"💡 '{query}' 검색어로 **'{stock_name}'** 종목을 찾아 분석합니다.")
+                
             with st.spinner(f"AI가 '{stock_name}'의 과거 데이터를 스캐닝 중입니다..."):
                 start_date = (datetime.now() - timedelta(days=250)).strftime('%Y-%m-%d')
                 df = fdr.DataReader(target_code, start_date)
                 
                 if len(df) > 120:
-                    # 필요한 모든 보조지표 계산
                     df['MA20'] = df['Close'].rolling(window=20).mean()
                     df['MA60'] = df['Close'].rolling(window=60).mean()
                     df['MA120'] = df['Close'].rolling(window=120).mean()
@@ -281,7 +298,6 @@ with tab3:
                         rsi = last['RSI']
                         high_6m = last['High_6M']
                         
-                        # Valuation (가격 상태 진단) 로직
                         if rsi > 70 or curr_price > ma120 * 1.2:
                             valuation_text = "🔴 매우 고평가 (단기 과열 구간)"
                             val_color = "error"
@@ -327,4 +343,4 @@ with tab3:
                 else:
                     st.error("상장된 지 얼마 되지 않아 120일 이상의 충분한 데이터가 없습니다.")
         else:
-            st.error("입력하신 종목을 찾을 수 없습니다. 이름(예: 삼성전자)이나 코드(예: 005930)를 정확히 입력해 주세요.")
+            st.error("입력하신 종목을 찾을 수 없습니다. 이름이 너무 많이 다르거나 상장폐지된 종목일 수 있습니다.")
