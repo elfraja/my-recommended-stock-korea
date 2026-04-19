@@ -202,4 +202,128 @@ tab1, tab2, tab3 = st.tabs(["⚡ 단기 스윙", "🌳 중기 추세", "🔍 AI 
 with tab1:
     st.markdown("### 🏄‍♂️ 단기 모멘텀 파도타기")
     with st.expander("💡 단기 종목 아이콘 가이드 펼쳐보기"):
-        st.markdown("* **🔥 불꽃:** 초강력 매수 구간 (거래량 폭발, 돌파)\n* **🟢 초록불:** 매수 진입 구간 (안
+        st.markdown("* **🔥 불꽃:** 초강력 매수 구간 (거래량 폭발, 돌파)\n* **🟢 초록불:** 매수 진입 구간 (안정적 상승 추세 시작)\n* **⚪ 흰색불:** 관망 (매수 대기)")
+    with st.spinner('1~2주 보유를 위한 단기 매매 타점을 계산 중입니다...'):
+        short_df = run_analysis("short")
+    if not short_df.empty:
+        top_7_short = short_df.sort_values(by='score', ascending=False).head(7)
+        st.subheader("🏆 집중 공략 섹터 (1~3위)")
+        cols1 = st.columns(3)
+        for i in range(3):
+            if i < len(top_7_short):
+                row = top_7_short.iloc[i]
+                with cols1[i]:
+                    st.info(f"### {i+1}위: {row['섹터명']}")
+                    for s in sorted(row['stocks'], key=lambda x: x['score'], reverse=True):
+                        icon = "🔥" if s['score'] >= 80 else "🟢" if s['score'] >= 60 else "⚪"
+                        with st.expander(f"{icon} {s['name']}"):
+                            st.write(f"현재가: {int(s['current']):,}원")
+                            st.markdown(f"📉 **매수:** `{int(s['buy']):,}원`")
+                            st.markdown(f"🎯 **목표:** `{int(s['target']):,}원`")
+                            st.markdown(f"🛑 **손절:** `{int(s['stop']):,}원`")
+                            st.caption(s['desc'])
+        st.divider()
+        st.subheader("🔍 추격 매수 가능 섹터 (4~7위)")
+        cols2 = st.columns(4)
+        for i in range(3, 7):
+            if i < len(top_7_short):
+                row = top_7_short.iloc[i]
+                with cols2[i-3]:
+                    st.success(f"**{i+1}위: {row['섹터명']}**")
+                    for s in sorted(row['stocks'], key=lambda x: x['score'], reverse=True):
+                        icon = "🟢" if s['score'] >= 60 else "⚪"
+                        with st.expander(f"{icon} {s['name']}"):
+                            st.markdown(f"📉 **매수:** `{int(s['buy']):,}원`")
+                            st.markdown(f"🎯 **목표:** `{int(s['target']):,}원`")
+                            st.caption(s['desc'])
+
+with tab2:
+    st.markdown("### 🌳 중기 실적/추세 따라가기")
+    with st.expander("💡 중기 종목 아이콘 가이드 펼쳐보기"):
+        st.markdown("* **⭐ 황금별:** 중장기 우상향 대장주 (조정 시 매수)\n* **🌱 새싹:** 성장 준비 단계 (고점 대비 할인 중)\n* **⚠️ 경고:** 생명선(120일) 이탈 (매수 금지 및 손절)")
+    with st.spinner('수개월 보유를 위한 60일/120일선 추세를 분석 중입니다...'):
+        mid_df = run_analysis("mid")
+    if not mid_df.empty:
+        top_7_mid = mid_df.sort_values(by='score', ascending=False).head(7)
+        st.subheader("🛡️ 중기 우량 섹터 (1~3위)")
+        cols3 = st.columns(3)
+        for i in range(3):
+            if i < len(top_7_mid):
+                row = top_7_mid.iloc[i]
+                with cols3[i]:
+                    st.success(f"### {i+1}위: {row['섹터명']}")
+                    for s in sorted(row['stocks'], key=lambda x: x['score'], reverse=True):
+                        icon = "⭐" if s['score'] >= 70 else "🌱" if s['score'] >= 40 else "⚠️"
+                        with st.expander(f"{icon} {s['name']}"):
+                            st.write(f"현재가: {int(s['current']):,}원")
+                            st.write(f"6개월 고점대비: **{s['extra']:.1f}%**")
+                            st.markdown(f"🛒 **매수(60일 부근):** `{int(s['buy']):,}원`")
+                            st.markdown(f"🎯 **목표(신고가):** `{int(s['target']):,}원`")
+                            st.markdown(f"🛑 **손절(120일 이탈):** `{int(s['stop']):,}원`")
+                            st.caption(s['desc'])
+        st.divider()
+        st.subheader("👀 중기 관심 섹터 (4~7위)")
+        cols4 = st.columns(4)
+        for i in range(3, 7):
+            if i < len(top_7_mid):
+                row = top_7_mid.iloc[i]
+                with cols4[i-3]:
+                    st.info(f"**{i+1}위: {row['섹터명']}**")
+                    for s in sorted(row['stocks'], key=lambda x: x['score'], reverse=True):
+                        icon = "🌱" if s['score'] >= 40 else "⚠️"
+                        with st.expander(f"{icon} {s['name']}"):
+                            st.markdown(f"🛒 **매수:** `{int(s['buy']):,}원`")
+                            st.markdown(f"🎯 **목표:** `{int(s['target']):,}원`")
+                            st.caption(s['desc'])
+
+with tab3:
+    st.markdown("### 🔍 AI 개별 종목 정밀 진단")
+    st.info("종목명이나 코드(예: 삼성전자, LGCNS, 005930)를 입력하세요.")
+    
+    query = st.text_input("종목명 검색", "").strip()
+    
+    if query:
+        names_dict = get_krx_names()
+        target_code = smart_search_stock(query, names_dict)
+        
+        if target_code:
+            stock_name = names_dict[target_code]
+            if query != stock_name and query != target_code:
+                st.success(f"💡 '{query}' 검색어로 **'{stock_name}'** 종목을 찾아 분석합니다.")
+                
+            with st.spinner(f"AI가 {stock_name}의 차트와 수급을 정밀 분석 중..."):
+                start_date = (datetime.now() - timedelta(days=250)).strftime('%Y-%m-%d')
+                df = fdr.DataReader(target_code, start_date)
+                
+                if len(df) > 120:
+                    df = calc_factors(df)
+                    last = df.iloc[-1]
+                    
+                    # 데이터 요약 (AI에게 보낼 내용)
+                    stats = {
+                        "현재가": f"{int(last['Close']):,}원",
+                        "RSI(강도)": f"{last['RSI']:.1f}",
+                        "60일선 대비": "위" if last['Close'] > last['MA60'] else "아래",
+                        "전고점 대비": f"{((last['Close']/last['High_6M'])-1)*100:.1f}%"
+                    }
+                    
+                    st.divider()
+                    col1, col2 = st.columns([1, 1.2])
+                    
+                    with col1:
+                        st.subheader(f"📊 {stock_name} 기술적 지표")
+                        st.metric("현재가", stats["현재가"])
+                        st.write(f"**RSI 지수 (추세 에너지):** {stats['RSI(강도)']}")
+                        st.write(f"**추세 상태:** 60일선 {stats['60일선 대비']}")
+                        st.markdown(f"📉 **추천 매수:** `{int(last['MA60']):,}원` 부근")
+                        st.markdown(f"🎯 **목표가:** `{int(last['High_6M']):,}원`")
+
+                    with col2:
+                        st.subheader("🤖 Gemini AI의 전문 의견")
+                        insight = get_ai_insight(stock_name, str(stats))
+                        st.write(insight)
+                        st.caption("※ 본 분석은 AI의 견해이며 투자 판단의 책임은 본인에게 있습니다.")
+                else:
+                    st.error("데이터 계산 중 오류가 발생했습니다. (최근 상장된 종목일 수 있습니다.)")
+        else:
+            st.error("입력하신 종목을 찾을 수 없습니다. 이름이 너무 많이 다르거나 상장폐지된 종목일 수 있습니다.")
