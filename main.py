@@ -12,7 +12,7 @@ import google.generativeai as genai
 # ───────────────────────────────────────────
 
 st.set_page_config(
-page_title="K-증시 반등 레이더",
+page_title=“K-증시 반등 레이더”,
 page_icon=“📡”,
 layout=“wide”
 )
