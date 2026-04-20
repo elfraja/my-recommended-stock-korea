@@ -232,17 +232,29 @@ tab1, tab2, tab3 = st.tabs(["⚡ 단기 섹터", "🌳 중기 섹터", "🔍 AI 
 
 with tab1:
     df = run_analysis("short")
-    top7 = df.sort_values("score", ascending=False).head(7)
-    for _, row in top7.iterrows():
-        st.subheader(row["섹터명"])
-        st.caption(make_sector_conclusion("short", row["score"]))
+
+    if df.empty or "score" not df.columns:
+        st.warning("단기 섹터 분석 결과가 없습니다. (조건 미충족)")
+    else:
+        top7 = df.sort_values("score", ascending=False).head(7)
+
+        for _, row in top7.iterrows():
+            st.subheader(row["섹터명"])
+            st.caption(make_sector_conclusion("short", row["score"]))
+
 
 with tab2:
     df = run_analysis("mid")
-    top7 = df.sort_values("score", ascending=False).head(7)
-    for _, row in top7.iterrows():
-        st.subheader(row["섹터명"])
-        st.caption(make_sector_conclusion("mid", row["score"]))
+
+    if df.empty or "score" not df.columns:
+        st.warning("중기 섹터 분석 결과가 없습니다. (조건 미충족)")
+    else:
+        top7 = df.sort_values("score", ascending=False).head(7)
+
+        for _, row in top7.iterrows():
+            st.subheader(row["섹터명"])
+            st.caption(make_sector_conclusion("mid", row["score"]))
+
 
 with tab3:
     st.subheader("⭐ 자동 추천 종목 TOP5")
