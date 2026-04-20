@@ -6,7 +6,7 @@ import difflib
 import google.generativeai as genai
 
 # ======================================================
-# 1. 앱 설정
+# 1. App Config
 # ======================================================
 st.set_page_config(page_title="⚖️ K-증시 실전 매매 비서", layout="wide")
 st.title("⚖️ K-증시 실전 매매 비서 with Gemini AI")
@@ -15,7 +15,7 @@ if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 # ======================================================
-# 2. 섹터 정의 (Gemini 초기 버전)
+# 2. Sector Definition (Gemini 원본)
 # ======================================================
 k_sectors = {
     "반도체": {"etf": "091160", "stocks": ["005930", "000660", "042700"]},
@@ -27,12 +27,11 @@ k_sectors = {
     "바이오/의료": {"etf": "091150", "stocks": ["207940", "068270", "293480"]},
     "로봇": {"etf": "440760", "stocks": ["433320", "043340", "441270"]},
     "K-뷰티": {"etf": "228790", "stocks": ["192820", "019170", "131970"]},
-    "K-푸드": {"etf": "429000", "stocks": ["097950", "004370", "005180"]},
     "자동차": {"etf": "091140", "stocks": ["005380", "000270", "012330"]},
 }
 
 # ======================================================
-# 3. 유틸
+# 3. Utils
 # ======================================================
 @st.cache_data(ttl=3600)
 def get_krx_names():
@@ -55,7 +54,7 @@ def smart_search_stock(query, names_dict):
     return None
 
 # ======================================================
-# 4. 지표 계산 (Gemini 원본)
+# 4. Indicator Calculation (Gemini 원본)
 # ======================================================
 def calc_short_term_factors(df):
     df["MA5"] = df.Close.rolling(5).mean()
@@ -95,55 +94,55 @@ def calc_factors(df):
     return df.dropna()
 
 # ======================================================
-# 5. 섹터 분석 (Gemini 원본 로직)
+# 5. Sector Analysis (Gemini 원본 로직)
 # ======================================================
 @st.cache_data(ttl=3600)
 def run_analysis(mode="short"):
     names = get_krx_names()
     results = []
-
     days = 100 if mode == "short" else 250
     start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
 
     for sector, info in k_sectors.items():
         stock_data = []
-
         for code in info["stocks"]:
             try:
                 df = fdr.DataReader(code, start)
 
                 if mode == "short":
-                    if len(df) < 65:
+                    if len(df) < 65: 
                         continue
                     df = calc_short_term_factors(df)
                     last = df.iloc[-1]
-
                     score = 0
                     if last.MA5 > last.MA20 > last.MA60: score += 20
                     if 50 <= last.RSI <= 70: score += 20
                     if last.Close > last.BB_Upper: score += 20
                     if last.Vol_Ratio > 1.5: score += 20
                     if last.MACD > last.Signal: score += 20
+                    buy, target, stop = last.MA20, last.BB_Upper, last.MA60
 
                 else:
                     if len(df) < 130:
                         continue
                     df = calc_mid_term_factors(df)
                     last = df.iloc[-1]
-
-                    score = 0
                     drawdown = (last.Close / last.High_6M - 1) * 100
+                    score = 0
                     if last.Close > last.MA60: score += 40
                     if last.MA60 > last.MA120: score += 30
                     if drawdown < -15: score += 30
+                    buy, target, stop = last.MA60, last.High_6M, last.MA120 * 0.95
 
                 stock_data.append({
                     "name": names.get(code, code),
                     "score": score,
-                    "buy": last.MA20 if mode == "short" else last.MA60,
-                    "target": last.BB_Upper if mode == "short" else last.High_6M,
-                    "stop": last.MA60 if mode == "short" else last.MA120 * 0.95
+                    "current": last.Close,
+                    "buy": buy,
+                    "target": target,
+                    "stop": stop
                 })
+
             except:
                 continue
 
@@ -156,55 +155,53 @@ def run_analysis(mode="short"):
             })
 
     return pd.DataFrame(results)
-    
+
+# ======================================================
+# 6. Sector One-line Comment
+# ======================================================
+def sector_comment(mode, score):
+    if mode == "short":
+        return (
+            "단기 수급과 돌파 신호가 유효한 섹터"
+            if score >= 70 else
+            "추세는 유지되나 종목 선별이 필요한 섹터"
+            if score >= 55 else
+            "모멘텀이 약해 관망이 적절한 섹터"
+        )
+    else:
+        return (
+            "중기 추세 우수, 비중 확대 검토 섹터"
+            if score >= 70 else
+            "조정 구간, 분할 접근 적합 섹터"
+            if score >= 50 else
+            "추세 불안, 보수적 대응 필요 섹터"
+        )
+
+# ======================================================
+# 7. AI Insight (Gemini + fallback)
+# ======================================================
 def get_ai_insight(stock_name, stats):
-    """
-    Gemini AI 종목 분석
-    실패 시 fallback 문구 반환
-    """
     try:
         model = genai.GenerativeModel("gemini-2.5-flash")
         prompt = f"""
         당신은 한국 주식 전문가입니다.
-        다음은 {stock_name} 종목의 최근 기술적 요약입니다.
+        다음은 {stock_name} 종목의 기술적 요약입니다.
 
         {stats}
 
-        위 정보를 바탕으로 투자자가 참고할 만한 핵심 의견을
-        3줄 이내로, 과장 없이 전문가 톤으로 설명해주세요.
+        투자 관점에서 참고할 핵심 의견을 3줄 이내로 설명해주세요.
         """
-
-        response = model.generate_content(prompt)
-        return response.text
-
-    except Exception:
-        # ✅ Gemini 실패 시 fallback (이전에 요청하신 보완 로직)
+        res = model.generate_content(prompt)
+        return res.text
+    except:
         return (
             "현재 주가는 중기 추세선 부근에서 움직이고 있습니다. "
-            "RSI상 과열 구간은 아니며 추세 관점에서는 분할 접근이 가능합니다. "
-            "단기적인 변동성 확대 여부를 함께 확인하는 것이 바람직합니다."
+            "과도한 과열은 아니며 분할 접근이 가능한 구간으로 판단됩니다. "
+            "추가적인 거래량 동반 여부를 확인하는 전략이 필요합니다."
         )
-# ======================================================
-# 6. 섹터 한 줄 코멘트
-# ======================================================
-def sector_comment(mode, score):
-    if mode == "short":
-        if score >= 70:
-            return "수급·돌파 신호가 동반된 단기 주도 섹터"
-        elif score >= 55:
-            return "추세는 유효하나 종목 선별이 필요한 섹터"
-        else:
-            return "모멘텀이 약해 관망이 적절한 섹터"
-    else:
-        if score >= 70:
-            return "중기 추세 우수, 비중 확대 검토 가능"
-        elif score >= 50:
-            return "조정 국면, 분할 접근 적합"
-        else:
-            return "추세 불안, 보수적 대응 필요"
 
 # ======================================================
-# 7. Top5 자동 추천 (tab3 하단)
+# 8. Top5 Recommendation (tab3 bottom)
 # ======================================================
 @st.cache_data(ttl=3600)
 def get_top5_recommendations():
@@ -220,9 +217,8 @@ def get_top5_recommendations():
                     continue
                 df = calc_factors(df)
                 last = df.iloc[-1]
-
-                score = 0
                 drawdown = (last.Close / last.High_6M - 1) * 100
+                score = 0
                 if last.Close > last.MA60 > last.MA120: score += 40
                 if 45 <= last.RSI <= 65: score += 30
                 if -20 <= drawdown <= -5: score += 30
@@ -238,11 +234,11 @@ def get_top5_recommendations():
     return sorted(results, key=lambda x: x["score"], reverse=True)[:5]
 
 # ======================================================
-# 8. UI
+# 9. UI
 # ======================================================
 tab1, tab2, tab3 = st.tabs(["⚡ 단기 섹터", "🌳 중기 섹터", "🔍 AI 종목 진단"])
 
-# ---------- 단기 섹터 ----------
+# ---------- Short Term ----------
 with tab1:
     df = run_analysis("short")
     top7 = df.sort_values("score", ascending=False).head(7)
@@ -257,22 +253,24 @@ with tab1:
             for s in sorted(row["stocks"], key=lambda x: x["score"], reverse=True):
                 icon = "🔥" if s["score"] >= 80 else "🟢" if s["score"] >= 60 else "⚪"
                 with st.expander(f"{icon} {s['name']}"):
-                    st.write(f"매수 {int(s['buy']):,} / 목표 {int(s['target']):,} / 손절 {int(s['stop']):,}")
+                    st.write(f"현재가: {int(s['current']):,}원")
+                    st.write(f"매수: {int(s['buy']):,} / 목표: {int(s['target']):,} / 손절: {int(s['stop']):,}")
 
     st.divider()
     st.subheader("👀 관찰 섹터 (4~7위)")
     cols2 = st.columns(4)
     for i in range(3, min(7, len(top7))):
         row = top7.iloc[i]
-        with cols2[i - 3]:
+        with cols2[i-3]:
             st.markdown(f"### {i+1}위: {row['섹터명']}")
             st.caption(sector_comment("short", row["score"]))
             for s in sorted(row["stocks"], key=lambda x: x["score"], reverse=True):
                 icon = "🟢" if s["score"] >= 60 else "⚪"
                 with st.expander(f"{icon} {s['name']}"):
-                    st.write(f"매수 {int(s['buy']):,} / 목표 {int(s['target']):,}")
+                    st.write(f"현재가: {int(s['current']):,}원")
+                    st.write(f"매수: {int(s['buy']):,} / 목표: {int(s['target']):,}")
 
-# ---------- 중기 섹터 ----------
+# ---------- Mid Term ----------
 with tab2:
     df = run_analysis("mid")
     top7 = df.sort_values("score", ascending=False).head(7)
@@ -287,37 +285,43 @@ with tab2:
             for s in sorted(row["stocks"], key=lambda x: x["score"], reverse=True):
                 icon = "⭐" if s["score"] >= 70 else "🌱" if s["score"] >= 40 else "⚠️"
                 with st.expander(f"{icon} {s['name']}"):
-                    st.write(f"매수 {int(s['buy']):,} / 목표 {int(s['target']):,} / 손절 {int(s['stop']):,}")
+                    st.write(f"현재가: {int(s['current']):,}원")
+                    st.write(f"매수: {int(s['buy']):,} / 목표: {int(s['target']):,} / 손절: {int(s['stop']):,}")
 
     st.divider()
     st.subheader("👀 중기 관찰 섹터 (4~7위)")
     cols2 = st.columns(4)
     for i in range(3, min(7, len(top7))):
         row = top7.iloc[i]
-        with cols2[i - 3]:
+        with cols2[i-3]:
             st.markdown(f"### {i+1}위: {row['섹터명']}")
             st.caption(sector_comment("mid", row["score"]))
             for s in sorted(row["stocks"], key=lambda x: x["score"], reverse=True):
                 icon = "🌱" if s["score"] >= 40 else "⚠️"
                 with st.expander(f"{icon} {s['name']}"):
-                    st.write(f"매수 {int(s['buy']):,} / 목표 {int(s['target']):,}")
+                    st.write(f"현재가: {int(s['current']):,}원")
+                    st.write(f"매수: {int(s['buy']):,} / 목표: {int(s['target']):,}")
 
-# ---------- AI 종목 진단 ----------
+# ---------- AI Stock Diagnosis ----------
 with tab3:
-    st.markdown("### 🔍 개별 종목 AI 진단")
+    st.subheader("🔍 개별 종목 AI 진단")
     query = st.text_input("종목명 또는 코드 입력")
 
     if query:
         names = get_krx_names()
         code = smart_search_stock(query, names)
         if code:
-            start = (datetime.now() - timedelta(days=250)).strftime("%Y-%m-%d")
-            df = fdr.DataReader(code, start)
-            df = calc_factors(df)
+            df0 = fdr.DataReader(code, (datetime.now() - timedelta(days=250)).strftime("%Y-%m-%d"))
+            df = calc_factors(df0)
             last = df.iloc[-1]
 
+            current = int(last.Close)
+            buy = int(last.MA60)
+            target = int(last.High_6M)
+            stop = int(last.MA120 * 0.95)
+
             stats = {
-                "현재가": int(last.Close),
+                "현재가": current,
                 "RSI": round(last.RSI, 1),
                 "60일선": "상회" if last.Close > last.MA60 else "하회",
                 "고점대비": round((last.Close / last.High_6M - 1) * 100, 1)
@@ -325,7 +329,12 @@ with tab3:
 
             col1, col2 = st.columns([1, 1.3])
             with col1:
+                st.metric("현재가", f"{current:,}원")
+                st.markdown(f"🛒 **매수:** `{buy:,}원`")
+                st.markdown(f"🎯 **목표:** `{target:,}원`")
+                st.markdown(f"🛑 **손절:** `{stop:,}원`")
                 st.write(stats)
+
             with col2:
                 st.write(get_ai_insight(names[code], stats))
 
@@ -333,4 +342,4 @@ with tab3:
     st.subheader("⭐ AI 추천 종목 TOP5")
     cols = st.columns(5)
     for col, s in zip(cols, get_top5_recommendations()):
-        col.metric(s["name"], f"{int(s['price']):,}", f"Score {s['score']}")
+        col.metric(s["name"], f"{int(s['price']):,}원", f"Score {s['score']}")
