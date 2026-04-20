@@ -8,15 +8,21 @@ import json
 import re
 
 # 1. 앱 설정
-st.set_page_config(page_title="K-증시 실전 매매 비서 V3", page_icon="📡", layout="wide")
+st.set_page_config(page_title="K-증시 실전 매매 비서 V4", page_icon="📡", layout="wide")
 
-# CSS 스타일
+# CSS 스타일 (블록형 UI 및 2x2 가격 카드 디자인 최적화)
 st.markdown("""
 <style>
-    .top3-card { background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); border: 2px solid #38bdf8; border-radius: 15px; padding: 20px; margin-bottom: 15px; }
-    .normal-card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 15px; margin-bottom: 10px; }
-    .price-box { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 10px; text-align: center; }
-    .price-item { padding: 8px; border-radius: 8px; font-size: 13px; font-weight: bold; }
+    /* 섹터 타이틀 블록 */
+    .sector-title-top { background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); border: 2px solid #38bdf8; border-radius: 10px; padding: 12px; margin-bottom: 12px; text-align: center; color: white; font-weight: bold; font-size: 18px; }
+    .sector-title-norm { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 12px; margin-bottom: 12px; text-align: center; color: white; font-weight: bold; font-size: 16px; }
+    
+    /* 개별 종목 카드 */
+    .normal-card { background: #0d1117; border: 1px solid #30363d; border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+    
+    /* 가격 박스 (좁은 세로 블록을 위해 2x2 배열로 변경) */
+    .price-box { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-top: 10px; text-align: center; }
+    .price-item { padding: 6px; border-radius: 6px; font-size: 12px; font-weight: bold; }
     .curr { background: #1e293b; color: #38bdf8; }
     .buy { background: #064e3b; color: #34d399; }
     .target { background: #78350f; color: #fbbf24; }
@@ -133,17 +139,17 @@ def run_full_analysis(mode):
 def render_stock_ui(s):
     st.markdown(f"""
     <div class="normal-card">
-        <div style="font-weight:bold; font-size:16px;">{s['icon']} {s['name']} <span style="font-size:12px;color:#8b949e;">{s['code']}</span></div>
+        <div style="font-weight:bold; font-size:15px;">{s['icon']} {s['name']} <span style="font-size:11px;color:#8b949e;">{s['code']}</span></div>
         <div class="price-box">
             <div class="price-item curr">현재<br>{int(s['curr']):,}</div>
-            <div class="price-item buy">매수판단<br>{int(s['buy']):,}</div>
-            <div class="price-item target">익절판단<br>{int(s['target']):,}</div>
-            <div class="price-item stop">손절판단<br>{int(s['stop']):,}</div>
+            <div class="price-item buy">매수<br>{int(s['buy']):,}</div>
+            <div class="price-item target">익절<br>{int(s['target']):,}</div>
+            <div class="price-item stop">손절<br>{int(s['stop']):,}</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-# --- 🛡️ 자체 알고리즘 폴백(Fallback) 함수 ---
+# 자체 알고리즘 폴백(Fallback) 함수
 def get_fallback_insight(stats):
     curr = float(stats["현재가"].replace("원", "").replace(",", ""))
     ma60 = float(stats["MA60"].replace("원", "").replace(",", ""))
@@ -151,11 +157,10 @@ def get_fallback_insight(stats):
     
     trend = "상승 추세 (60일선 위 위치)" if curr >= ma60 else "하락 추세 (60일선 저항)"
     energy = "단기 과매수(조정 주의)" if rsi >= 70 else "과매도(기술적 반등 기대)" if rsi <= 30 else "중립 및 방향성 탐색 구간"
-    
     advice = "현재 추세가 살아있으므로 눌림목 분할 매수 접근이 유효합니다." if curr >= ma60 else "추세가 무너진 상태이므로 섣부른 매수보다 하방 지지 확인이 우선입니다."
     opinion = "매수 관점" if curr >= ma60 and rsi < 70 else "관망" if curr < ma60 else "분할 매도 (수익 실현)"
     
-    return f"⚠️ **AI API 응답 지연으로 시스템 알고리즘 분석을 제공합니다.**\n\n1. 📊 **현재 상황:** 주가는 {trend}에 있으며, RSI 지표상 에너지는 {energy}입니다.\n2. 🎯 **매매 전략:** {advice}\n3. 💡 **종합 의견:** {opinion}"
+    return f"⚠️ **AI 시스템 응답 지연으로 자체 알고리즘 분석을 제공합니다.**\n\n1. 📊 **현재 상황:** 주가는 {trend}에 있으며, 에너지는 {energy}입니다.\n2. 🎯 **매매 전략:** {advice}\n3. 💡 **종합 의견:** {opinion}"
 
 def get_ai_insight(name, stats):
     if not GEMINI_READY: 
@@ -164,41 +169,63 @@ def get_ai_insight(name, stats):
         model = genai.GenerativeModel('gemini-1.5-flash')
         prompt = f"주식 전문가로서 '{name}'의 지표({str(stats)})를 보고 투자 인사이트를 3줄 요약해주세요."
         return model.generate_content(prompt).text
-    except Exception as e:
-        return get_fallback_insight(stats) # API 에러 시 폴백 실행
+    except Exception:
+        return get_fallback_insight(stats)
 
-# 5. UI 메인
+# 5. UI 메인 (대시보드 블록형 레이아웃)
 tab1, tab2, tab3 = st.tabs(["⚡ 단기 스윙 (Top 7)", "🌳 중기 추세 (Top 7)", "🔍 AI 종목 분석 & 추천"])
 
 with tab1:
     st.header("⚡ 단기 반등 모멘텀 Top 7")
+    st.caption("1~2주 보유 목적. 매수 대비 손절가 -5% 철저히 준수.")
     with st.spinner("단기 타점 분석 중..."):
         df_s = run_full_analysis("short")
         if not df_s.empty:
-            for i, (_, row) in enumerate(df_s.iterrows()):
-                if i < 3:
-                    with st.container():
-                        st.markdown(f"<div class='top3-card'><h3>🏆 {i+1}위: {row['sector']}</h3>", unsafe_allow_html=True)
-                        for s in row['stocks']: render_stock_ui(s)
-                        st.markdown("</div>", unsafe_allow_html=True)
-                else:
-                    with st.expander(f"{i+1}위: {row['sector']}"):
-                        for s in row['stocks']: render_stock_ui(s)
+            # 상단 3개 블록 렌더링
+            top3 = df_s.head(3)
+            cols_top = st.columns(3)
+            for i, (_, row) in enumerate(top3.iterrows()):
+                with cols_top[i]:
+                    st.markdown(f"<div class='sector-title-top'>🏆 {i+1}위: {row['sector']}</div>", unsafe_allow_html=True)
+                    for s in row['stocks']: 
+                        render_stock_ui(s)
+            
+            st.divider() # 상단/하단 구분선
+            
+            # 하단 4개 블록 렌더링
+            bot4 = df_s.iloc[3:7]
+            cols_bot = st.columns(4)
+            for i, (_, row) in enumerate(bot4.iterrows()):
+                with cols_bot[i]:
+                    st.markdown(f"<div class='sector-title-norm'>🏅 {i+4}위: {row['sector']}</div>", unsafe_allow_html=True)
+                    for s in row['stocks']: 
+                        render_stock_ui(s)
 
 with tab2:
     st.header("🌳 중기 실적/추세 Top 7")
+    st.caption("1~3개월 보유 목적. 60일선 매수, 120일선 이탈 시 손절.")
     with st.spinner("중기 타점 분석 중..."):
         df_m = run_full_analysis("mid")
         if not df_m.empty:
-            for i, (_, row) in enumerate(df_m.iterrows()):
-                if i < 3:
-                    with st.container():
-                        st.markdown(f"<div class='top3-card'><h3>🏅 {i+1}위: {row['sector']}</h3>", unsafe_allow_html=True)
-                        for s in row['stocks']: render_stock_ui(s)
-                        st.markdown("</div>", unsafe_allow_html=True)
-                else:
-                    with st.expander(f"{i+1}위: {row['sector']}"):
-                        for s in row['stocks']: render_stock_ui(s)
+            # 상단 3개 블록 렌더링
+            top3 = df_m.head(3)
+            cols_top = st.columns(3)
+            for i, (_, row) in enumerate(top3.iterrows()):
+                with cols_top[i]:
+                    st.markdown(f"<div class='sector-title-top'>🏆 {i+1}위: {row['sector']}</div>", unsafe_allow_html=True)
+                    for s in row['stocks']: 
+                        render_stock_ui(s)
+            
+            st.divider()
+            
+            # 하단 4개 블록 렌더링
+            bot4 = df_m.iloc[3:7]
+            cols_bot = st.columns(4)
+            for i, (_, row) in enumerate(bot4.iterrows()):
+                with cols_bot[i]:
+                    st.markdown(f"<div class='sector-title-norm'>🏅 {i+4}위: {row['sector']}</div>", unsafe_allow_html=True)
+                    for s in row['stocks']: 
+                        render_stock_ui(s)
 
 with tab3:
     st.header("🔍 정밀 분석 & 유망주 픽")
@@ -218,7 +245,7 @@ with tab3:
                 except Exception:
                     is_ai_success = False
             
-            # --- 🛡️ 자체 알고리즘 폴백 (AI 실패 시) ---
+            # AI 폴백 (AI 실패 시 자체 퀀트 추천)
             if not is_ai_success:
                 st.warning("⚠️ AI 응답 지연으로 자체 퀀트 알고리즘이 선정한 우량 종목을 제공합니다.")
                 recs = []
@@ -227,9 +254,8 @@ with tab3:
                     for _, row in cached_df.iterrows():
                         for s in row['stocks']:
                             if len(recs) < 5 and s['score'] > 50:
-                                recs.append({"rank": len(recs)+1, "name": s['name'], "code": s['code'], "reason": f"{row['sector']} 섹터 수급 우수 및 정배열 초입"})
+                                recs.append({"rank": len(recs)+1, "name": s['name'], "code": s['code'], "reason": f"{row['sector']} 섹터 수급 우수 및 추세 호전"})
 
-            # 화면 렌더링
             if recs:
                 cols = st.columns(5)
                 for idx, r in enumerate(recs):
@@ -250,6 +276,9 @@ with tab3:
         
         if target_code:
             stock_name = names_dict[target_code]
+            if query != stock_name and query != target_code:
+                st.success(f"💡 '{query}' 검색어로 **'{stock_name}'** 종목을 찾아 분석합니다.")
+                
             with st.spinner(f"'{stock_name}' 차트 데이터 정밀 분석 중..."):
                 start_date = (datetime.now() - timedelta(days=250)).strftime('%Y-%m-%d')
                 df = fdr.DataReader(target_code, start_date)
