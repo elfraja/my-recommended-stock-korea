@@ -230,4 +230,3 @@ with tab2:
                 with st.expander(s["name"]):
                     st.write(f"현재가 {int(s['current']):,}원")
                     st.write(f"고점대비 {s['extra']:.1f}%")
-``
