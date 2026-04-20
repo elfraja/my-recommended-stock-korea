@@ -32,7 +32,7 @@ k_sectors = {
 }
 
 # ======================================================
-# 3. 공통 유틸
+# 3. 유틸
 # ======================================================
 @st.cache_data(ttl=3600)
 def get_krx_names():
@@ -40,8 +40,6 @@ def get_krx_names():
     return dict(zip(df["Code"], df["Name"]))
 
 def normalize_string(s):
-    if not s:
-        return ""
     return str(s).lower().replace(" ", "")
 
 def smart_search_stock(query, names_dict):
@@ -60,47 +58,47 @@ def smart_search_stock(query, names_dict):
 # 4. 지표 계산 (Gemini 원본)
 # ======================================================
 def calc_short_term_factors(df):
-    df["MA5"] = df["Close"].rolling(5).mean()
-    df["MA20"] = df["Close"].rolling(20).mean()
-    df["MA60"] = df["Close"].rolling(60).mean()
+    df["MA5"] = df.Close.rolling(5).mean()
+    df["MA20"] = df.Close.rolling(20).mean()
+    df["MA60"] = df.Close.rolling(60).mean()
 
-    delta = df["Close"].diff()
+    delta = df.Close.diff()
     gain = delta.clip(lower=0).ewm(com=13, adjust=False).mean()
     loss = (-delta.clip(upper=0)).ewm(com=13, adjust=False).mean()
     df["RSI"] = 100 - (100 / (1 + gain / (loss + 1e-9)))
 
-    df["STD20"] = df["Close"].rolling(20).std()
-    df["BB_Upper"] = df["MA20"] + df["STD20"] * 2
-    df["Vol_Ratio"] = df["Volume"] / df["Volume"].rolling(20).mean()
+    df["STD20"] = df.Close.rolling(20).std()
+    df["BB_Upper"] = df.MA20 + df.STD20 * 2
+    df["Vol_Ratio"] = df.Volume / df.Volume.rolling(20).mean()
 
-    exp1 = df["Close"].ewm(span=12, adjust=False).mean()
-    exp2 = df["Close"].ewm(span=26, adjust=False).mean()
+    exp1 = df.Close.ewm(span=12, adjust=False).mean()
+    exp2 = df.Close.ewm(span=26, adjust=False).mean()
     df["MACD"] = exp1 - exp2
-    df["Signal"] = df["MACD"].ewm(span=9, adjust=False).mean()
+    df["Signal"] = df.MACD.ewm(span=9, adjust=False).mean()
 
     return df.dropna()
 
 def calc_mid_term_factors(df):
-    df["MA60"] = df["Close"].rolling(60).mean()
-    df["MA120"] = df["Close"].rolling(120).mean()
-    df["High_6M"] = df["Close"].rolling(120).max()
+    df["MA60"] = df.Close.rolling(60).mean()
+    df["MA120"] = df.Close.rolling(120).mean()
+    df["High_6M"] = df.Close.rolling(120).max()
     return df.dropna()
 
 def calc_factors(df):
-    df["MA60"] = df["Close"].rolling(60).mean()
-    df["MA120"] = df["Close"].rolling(120).mean()
-    delta = df["Close"].diff()
+    df["MA60"] = df.Close.rolling(60).mean()
+    df["MA120"] = df.Close.rolling(120).mean()
+    delta = df.Close.diff()
     gain = delta.clip(lower=0).ewm(com=13, adjust=False).mean()
     loss = (-delta.clip(upper=0)).ewm(com=13, adjust=False).mean()
     df["RSI"] = 100 - (100 / (1 + gain / (loss + 1e-9)))
-    df["High_6M"] = df["Close"].rolling(120).max()
+    df["High_6M"] = df.Close.rolling(120).max()
     return df.dropna()
 
 # ======================================================
-# 5. Gemini 원본 섹터 분석 엔진
+# 5. 섹터 분석 (Gemini 원본 로직)
 # ======================================================
 @st.cache_data(ttl=3600)
-def run_analysis(mode):
+def run_analysis(mode="short"):
     names = get_krx_names()
     results = []
 
@@ -108,11 +106,10 @@ def run_analysis(mode):
     start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
 
     for sector, info in k_sectors.items():
-        try:
-            etf_df = fdr.DataReader(info["etf"], start)
-            stock_data = []
+        stock_data = []
 
-            for code in info["stocks"]:
+        for code in info["stocks"]:
+            try:
                 df = fdr.DataReader(code, start)
 
                 if mode == "short":
@@ -128,70 +125,59 @@ def run_analysis(mode):
                     if last.Vol_Ratio > 1.5: score += 20
                     if last.MACD > last.Signal: score += 20
 
-                    stock_data.append({
-                        "name": names.get(code, code),
-                        "score": score,
-                        "buy": last.MA20,
-                        "target": last.BB_Upper,
-                        "stop": last.MA60
-                    })
-
                 else:
                     if len(df) < 130:
                         continue
                     df = calc_mid_term_factors(df)
                     last = df.iloc[-1]
-                    drawdown = (last.Close / last.High_6M - 1) * 100
 
                     score = 0
+                    drawdown = (last.Close / last.High_6M - 1) * 100
                     if last.Close > last.MA60: score += 40
                     if last.MA60 > last.MA120: score += 30
                     if drawdown < -15: score += 30
 
-                    stock_data.append({
-                        "name": names.get(code, code),
-                        "score": score,
-                        "buy": last.MA60,
-                        "target": last.High_6M,
-                        "stop": last.MA120 * 0.95
-                    })
-
-            if stock_data:
-                sector_score = sum(s["score"] for s in stock_data) / len(stock_data)
-                results.append({
-                    "섹터명": sector,
-                    "score": sector_score,
-                    "stocks": stock_data
+                stock_data.append({
+                    "name": names.get(code, code),
+                    "score": score,
+                    "buy": last.MA20 if mode == "short" else last.MA60,
+                    "target": last.BB_Upper if mode == "short" else last.High_6M,
+                    "stop": last.MA60 if mode == "short" else last.MA120 * 0.95
                 })
+            except:
+                continue
 
-        except:
-            continue
+        if stock_data:
+            sector_score = sum(s["score"] for s in stock_data) / len(stock_data)
+            results.append({
+                "섹터명": sector,
+                "score": sector_score,
+                "stocks": stock_data
+            })
 
     return pd.DataFrame(results)
 
 # ======================================================
-# 6. AI 분석 (Gemini + Fallback)
+# 6. 섹터 한 줄 코멘트
 # ======================================================
-def get_ai_insight(name, summary):
-    try:
-        model = genai.GenerativeModel("gemini-2.5-flash")
-        prompt = f"""
-        당신은 한국 주식 전문가입니다.
-        {name} 종목의 최근 기술적 지표 요약은 다음과 같습니다:
-        {summary}
-        투자자에게 도움이 될 핵심 조언을 3줄로 정리해주세요.
-        """
-        res = model.generate_content(prompt)
-        return res.text
-    except:
-        return (
-            "현재 주가는 중기 추세선 부근에서 움직이고 있습니다. "
-            "과열 구간은 아니며 분할 접근이 가능한 위치입니다. "
-            "거래량 동반 추세 전환 여부를 확인하는 것이 중요합니다."
-        )
+def sector_comment(mode, score):
+    if mode == "short":
+        if score >= 70:
+            return "수급·돌파 신호가 동반된 단기 주도 섹터"
+        elif score >= 55:
+            return "추세는 유효하나 종목 선별이 필요한 섹터"
+        else:
+            return "모멘텀이 약해 관망이 적절한 섹터"
+    else:
+        if score >= 70:
+            return "중기 추세 우수, 비중 확대 검토 가능"
+        elif score >= 50:
+            return "조정 국면, 분할 접근 적합"
+        else:
+            return "추세 불안, 보수적 대응 필요"
 
 # ======================================================
-# 7. Top5 자동 추천 (tab3 전용)
+# 7. Top5 자동 추천 (tab3 하단)
 # ======================================================
 @st.cache_data(ttl=3600)
 def get_top5_recommendations():
@@ -205,12 +191,11 @@ def get_top5_recommendations():
                 df = fdr.DataReader(code, start)
                 if len(df) < 130:
                     continue
-
                 df = calc_factors(df)
                 last = df.iloc[-1]
-                drawdown = (last.Close / last.High_6M - 1) * 100
 
                 score = 0
+                drawdown = (last.Close / last.High_6M - 1) * 100
                 if last.Close > last.MA60 > last.MA120: score += 40
                 if 45 <= last.RSI <= 65: score += 30
                 if -20 <= drawdown <= -5: score += 30
@@ -241,10 +226,24 @@ with tab1:
         row = top7.iloc[i]
         with cols[i]:
             st.info(f"### {i+1}위: {row['섹터명']}")
+            st.caption(sector_comment("short", row["score"]))
             for s in sorted(row["stocks"], key=lambda x: x["score"], reverse=True):
                 icon = "🔥" if s["score"] >= 80 else "🟢" if s["score"] >= 60 else "⚪"
                 with st.expander(f"{icon} {s['name']}"):
                     st.write(f"매수 {int(s['buy']):,} / 목표 {int(s['target']):,} / 손절 {int(s['stop']):,}")
+
+    st.divider()
+    st.subheader("👀 관찰 섹터 (4~7위)")
+    cols2 = st.columns(4)
+    for i in range(3, min(7, len(top7))):
+        row = top7.iloc[i]
+        with cols2[i - 3]:
+            st.markdown(f"### {i+1}위: {row['섹터명']}")
+            st.caption(sector_comment("short", row["score"]))
+            for s in sorted(row["stocks"], key=lambda x: x["score"], reverse=True):
+                icon = "🟢" if s["score"] >= 60 else "⚪"
+                with st.expander(f"{icon} {s['name']}"):
+                    st.write(f"매수 {int(s['buy']):,} / 목표 {int(s['target']):,}")
 
 # ---------- 중기 섹터 ----------
 with tab2:
@@ -257,10 +256,24 @@ with tab2:
         row = top7.iloc[i]
         with cols[i]:
             st.success(f"### {i+1}위: {row['섹터명']}")
+            st.caption(sector_comment("mid", row["score"]))
             for s in sorted(row["stocks"], key=lambda x: x["score"], reverse=True):
                 icon = "⭐" if s["score"] >= 70 else "🌱" if s["score"] >= 40 else "⚠️"
                 with st.expander(f"{icon} {s['name']}"):
                     st.write(f"매수 {int(s['buy']):,} / 목표 {int(s['target']):,} / 손절 {int(s['stop']):,}")
+
+    st.divider()
+    st.subheader("👀 중기 관찰 섹터 (4~7위)")
+    cols2 = st.columns(4)
+    for i in range(3, min(7, len(top7))):
+        row = top7.iloc[i]
+        with cols2[i - 3]:
+            st.markdown(f"### {i+1}위: {row['섹터명']}")
+            st.caption(sector_comment("mid", row["score"]))
+            for s in sorted(row["stocks"], key=lambda x: x["score"], reverse=True):
+                icon = "🌱" if s["score"] >= 40 else "⚠️"
+                with st.expander(f"{icon} {s['name']}"):
+                    st.write(f"매수 {int(s['buy']):,} / 목표 {int(s['target']):,}")
 
 # ---------- AI 종목 진단 ----------
 with tab3:
@@ -270,7 +283,6 @@ with tab3:
     if query:
         names = get_krx_names()
         code = smart_search_stock(query, names)
-
         if code:
             start = (datetime.now() - timedelta(days=250)).strftime("%Y-%m-%d")
             df = fdr.DataReader(code, start)
@@ -281,7 +293,7 @@ with tab3:
                 "현재가": int(last.Close),
                 "RSI": round(last.RSI, 1),
                 "60일선": "상회" if last.Close > last.MA60 else "하회",
-                "고점대비": round((last.Close/last.High_6M - 1) * 100, 1)
+                "고점대비": round((last.Close / last.High_6M - 1) * 100, 1)
             }
 
             col1, col2 = st.columns([1, 1.3])
