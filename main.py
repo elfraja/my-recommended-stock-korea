@@ -79,6 +79,82 @@ def calc_factors(df):
     df["STD20"] = df.Close.rolling(20).std()
     return df.dropna()
 
+@st.cache_data(ttl=3600)
+def run_analysis(mode):
+    names = get_krx_names()
+    results = []
+
+    days = 100 if mode == "short" else 250
+    start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    for sector, info in k_sectors.items():
+        try:
+            etf_df = fdr.DataReader(info["etf"], start)
+            if len(etf_df) < 5:
+                continue
+
+            perf_5d = (etf_df.Close.iloc[-1] / etf_df.Close.iloc[-5] - 1) * 100
+            stocks = []
+
+            for code in info["stocks"]:
+                df = fdr.DataReader(code, start)
+
+                if mode == "short" and len(df) < 70:
+                    continue
+                if mode == "mid" and len(df) < 130:
+                    continue
+
+                if mode == "short":
+                    df = calc_short_term_factors(df)
+                    last = df.iloc[-1]
+                    score = 0
+                    if last.MA5 > last.MA20 > last.MA60: score += 20
+                    if 50 <= last.RSI <= 70: score += 20
+                    if last.Vol_Ratio > 1.5: score += 20
+                    if last.MACD > last.Signal: score += 20
+                    score += 20 if last.Close > last.BB_Upper else 0
+                    score = min(score, 80)
+
+                    stocks.append({
+                        "name": names.get(code, code),
+                        "score": score,
+                        "current": last.Close,
+                        "buy": last.MA20,
+                        "target": last.BB_Upper,
+                        "stop": last.MA60
+                    })
+
+                else:
+                    df = calc_mid_term_factors(df)
+                    last = df.iloc[-1]
+                    drawdown = (last.Close / last.High_6M - 1) * 100
+                    score = 0
+                    if last.Close > last.MA60: score += 40
+                    if last.MA60 > last.MA120: score += 30
+                    if drawdown < -15: score += 30
+
+                    stocks.append({
+                        "name": names.get(code, code),
+                        "score": score,
+                        "current": last.Close,
+                        "buy": last.MA60,
+                        "target": last.High_6M,
+                        "stop": last.MA120 * 0.95,
+                        "extra": drawdown
+                    })
+
+            if stocks:
+                sector_score = sum(s["score"] for s in stocks) / len(stocks)
+                results.append({
+                    "섹터명": sector,
+                    "score": sector_score,
+                    "stocks": stocks
+                })
+        except:
+            continue
+
+    return pd.DataFrame(results)
+``
 # ======================================================
 # 5. 섹터 결론
 # ======================================================
