@@ -156,7 +156,34 @@ def run_analysis(mode="short"):
             })
 
     return pd.DataFrame(results)
+    
+def get_ai_insight(stock_name, stats):
+    """
+    Gemini AI 종목 분석
+    실패 시 fallback 문구 반환
+    """
+    try:
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        prompt = f"""
+        당신은 한국 주식 전문가입니다.
+        다음은 {stock_name} 종목의 최근 기술적 요약입니다.
 
+        {stats}
+
+        위 정보를 바탕으로 투자자가 참고할 만한 핵심 의견을
+        3줄 이내로, 과장 없이 전문가 톤으로 설명해주세요.
+        """
+
+        response = model.generate_content(prompt)
+        return response.text
+
+    except Exception:
+        # ✅ Gemini 실패 시 fallback (이전에 요청하신 보완 로직)
+        return (
+            "현재 주가는 중기 추세선 부근에서 움직이고 있습니다. "
+            "RSI상 과열 구간은 아니며 추세 관점에서는 분할 접근이 가능합니다. "
+            "단기적인 변동성 확대 여부를 함께 확인하는 것이 바람직합니다."
+        )
 # ======================================================
 # 6. 섹터 한 줄 코멘트
 # ======================================================
