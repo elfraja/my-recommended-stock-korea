@@ -145,7 +145,50 @@ def get_top5_recommendations():
 # ======================================================
 tab1, tab2, tab3 = st.tabs(["⚡ 단기 섹터", "🌳 중기 섹터", "🔍 AI 종목 진단"])
 
-# ----- 단기 / 중기 섹터는 기존 로직 그대로 사용 -----
+with tab1:
+    st.subheader("⚡ 단기 섹터 랭킹")
+
+    df_short = run_analysis("short")
+
+    if df_short.empty:
+        st.warning("단기 섹터 분석 결과가 없습니다. (데이터 수집 중)")
+    else:
+        top7 = df_short.sort_values("score", ascending=False).head(7)
+
+        cols = st.columns(3)
+        for i in range(min(3, len(top7))):
+            row = top7.iloc[i]
+            with cols[i]:
+                st.info(f"### {i+1}위: {row['섹터명']}")
+                st.caption(make_sector_conclusion("short", row["score"]))
+
+                for s in sorted(row["stocks"], key=lambda x: x["score"], reverse=True):
+                    icon = "🔥" if s["score"] >= 70 else "🟢" if s["score"] >= 55 else "⚪"
+                    with st.expander(f"{icon} {s['name']}"):
+                        st.write(f"현재가: {int(s['current']):,}원")
+                        st.write(f"매수: {int(s['buy']):,} / 목표: {int(s['target']):,}")
+with tab2:
+    st.subheader("🌳 중기 섹터 랭킹")
+
+    df_mid = run_analysis("mid")
+
+    if df_mid.empty:
+        st.warning("중기 섹터 분석 결과가 없습니다. (데이터 수집 중)")
+    else:
+        top7 = df_mid.sort_values("score", ascending=False).head(7)
+
+        cols = st.columns(3)
+        for i in range(min(3, len(top7))):
+            row = top7.iloc[i]
+            with cols[i]:
+                st.success(f"### {i+1}위: {row['섹터명']}")
+                st.caption(make_sector_conclusion("mid", row["score"]))
+
+                for s in sorted(row["stocks"], key=lambda x: x["score"], reverse=True):
+                    icon = "⭐" if s["score"] >= 70 else "🌱" if s["score"] >= 50 else "⚠️"
+                    with st.expander(f"{icon} {s['name']}"):
+                        st.write(f"현재가: {int(s['current']):,}원")
+                        st.write(f"고점 대비: {s['extra']:.1f}%")
 with tab3:
     st.subheader("⭐ 자동 추천 종목 TOP 5")
 
