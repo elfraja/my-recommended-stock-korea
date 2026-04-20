@@ -54,9 +54,11 @@ def normalize_string(s: str) -> str:
 def smart_search_stock(query, names_dict):
     if query.isdigit() and query in names_dict:
         return query
+
     q = normalize_string(query)
     norm = {c: normalize_string(n) for c, n in names_dict.items()}
     matches = difflib.get_close_matches(q, norm.values(), n=1, cutoff=0.6)
+
     if matches:
         for code, name in norm.items():
             if name == matches[0]:
@@ -80,7 +82,7 @@ def add_indicators(df):
     return df.dropna()
 
 # ======================================================
-# 5. Sector Analysis (단기 / 중기)
+# 5. Sector Analysis (✅ 빈 결과 방어 포함)
 # ======================================================
 @st.cache_data(ttl=3600)
 def run_analysis(mode="short"):
@@ -132,10 +134,13 @@ def run_analysis(mode="short"):
                 "stocks": stocks
             })
 
+    if not results:
+        return pd.DataFrame(columns=["sector", "score", "stocks"])
+
     return pd.DataFrame(results)
 
 # ======================================================
-# 6. Diagnosis Engine (공통)
+# 6. Diagnose Engine
 # ======================================================
 def diagnose_stock(current, buy, target, stop):
     if current <= buy * 1.03:
@@ -158,18 +163,8 @@ def diagnose_stock(current, buy, target, stop):
 
     return status, rr, action
 
-def track_status_change(key, status):
-    if key not in st.session_state:
-        st.session_state[key] = status
-        return None
-    prev = st.session_state[key]
-    st.session_state[key] = status
-    if prev != status:
-        return f"🔄 상태 변화: {prev} → {status}"
-    return None
-
 # ======================================================
-# 7. AI Insight (Gemini + fallback)
+# 7. Gemini AI Insight (✅ fallback 안전)
 # ======================================================
 def get_ai_insight(stock_name, stats):
     try:
@@ -180,7 +175,7 @@ def get_ai_insight(stock_name, stats):
 
         {stats}
 
-        투자자가 참고할 핵심 조언을 3줄 이내로 제시하세요.
+        투자 관점에서 참고할 핵심 조언을 3줄 이내로 제시하세요.
         """
         res = model.generate_content(prompt)
         return res.text
@@ -188,7 +183,7 @@ def get_ai_insight(stock_name, stats):
         return (
             "현재 주가는 중기 추세선 부근에서 움직이고 있습니다. "
             "과열 구간은 아니며 분할 접근이 가능한 위치입니다. "
-            "추가 매수는 거래량 확인 후 판단이 바람직합니다."
+            "거래량 동반 여부를 추가로 확인하는 전략이 필요합니다."
         )
 
 # ======================================================
@@ -197,7 +192,7 @@ def get_ai_insight(stock_name, stats):
 @st.cache_data(ttl=3600)
 def get_top5_recommendations():
     names = get_krx_names()
-    result = []
+    results = []
     start = (datetime.now() - timedelta(days=260)).strftime("%Y-%m-%d")
 
     for codes in k_sectors.values():
@@ -215,7 +210,7 @@ def get_top5_recommendations():
                 if 45 <= last.RSI <= 65: score += 30
                 if -20 <= drawdown <= -5: score += 30
 
-                result.append({
+                results.append({
                     "code": code,
                     "name": names.get(code, code),
                     "current": int(last.Close),
@@ -227,7 +222,7 @@ def get_top5_recommendations():
             except:
                 continue
 
-    return sorted(result, key=lambda x: x["score"], reverse=True)[:5]
+    return sorted(results, key=lambda x: x["score"], reverse=True)[:5]
 
 # ======================================================
 # 9. UI
@@ -238,20 +233,21 @@ tab1, tab2, tab3 = st.tabs(["⚡ 단기 섹터", "🌳 중기 섹터", "🔍 AI 
 for label, mode, tab in [("⚡ 단기", "short", tab1), ("🌳 중기", "mid", tab2)]:
     with tab:
         df = run_analysis(mode)
+
+        if df.empty or "score" not in df.columns:
+            st.warning("현재 조건을 만족하는 섹터가 없습니다.")
+            continue
+
         top7 = df.sort_values("score", ascending=False).head(7)
+        for i, (_, row) in enumerate(top7.iterrows(), 1):
+            st.subheader(f"{label} {i}위: {row['sector']}")
+            for s in row["stocks"]:
+                st.write(
+                    f"- {s['name']} | 현재 {s['current']:,} / "
+                    f"매수 {s['buy']:,} / 목표 {s['target']:,} / 손절 {s['stop']:,}"
+                )
 
-        cols = st.columns(3)
-        for i in range(min(3, len(top7))):
-            row = top7.iloc[i]
-            with cols[i]:
-                st.subheader(f"{label} Top{i+1}: {row['sector']}")
-                for s in sorted(row["stocks"], key=lambda x: x["score"], reverse=True):
-                    st.write(
-                        f"- {s['name']} | 현재 {s['current']:,} / "
-                        f"매수 {s['buy']:,} / 목표 {s['target']:,} / 손절 {s['stop']:,}"
-                    )
-
-# ---------- AI Diagnosis ----------
+# ---------- AI Stock Diagnosis ----------
 with tab3:
     names = get_krx_names()
     query = st.text_input("종목명 또는 코드 입력")
@@ -269,16 +265,13 @@ with tab3:
             stop = int(last.MA120 * 0.95)
 
             status, rr, action = diagnose_stock(current, buy, target, stop)
-            change = track_status_change(code, status)
 
             st.metric("현재가", f"{current:,}원")
             st.write(f"매수 {buy:,} / 목표 {target:,} / 손절 {stop:,}")
             st.write(status)
             if rr:
-                st.write(f"손익비(R/R): {rr}")
+                st.write(f"손익비 (R/R): {rr}")
             st.info(action)
-            if change:
-                st.warning(change)
 
             stats = {
                 "현재가": current,
@@ -301,5 +294,5 @@ with tab3:
             )
             st.write(status)
             if rr:
-                st.write(f"손익비(R/R): {rr}")
+                st.write(f"손익비 (R/R): {rr}")
             st.info(action)
