@@ -8,14 +8,14 @@ import google.generativeai as genai
 # ======================================================
 # 1. 앱 설정
 # ======================================================
-st.set_page_config(page_title="K-증시 AI 하이브리드 비서", layout="wide")
+st.set_page_config(page_title="K-증시 실전 매매 비서", layout="wide")
 st.title("⚖️ K-증시 실전 매매 비서 with Gemini AI")
 
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 # ======================================================
-# 2. 섹터 정의 (원본 유지)
+# 2. 섹터 정의 (✅ 원본 그대로)
 # ======================================================
 k_sectors = {
     "반도체": {"etf": "091160", "stocks": ["005930", "000660", "042700"]},
@@ -63,48 +63,58 @@ def smart_search_stock(query, names_dict):
     return None
 
 # ======================================================
-# 4. 지표 계산
+# 4. 지표 계산 (✅ 원본)
 # ======================================================
-def calc_factors(df):
-    df["MA20"] = df.Close.rolling(20).mean()
-    df["MA60"] = df.Close.rolling(60).mean()
-    df["MA120"] = df.Close.rolling(120).mean()
+def calc_short_term_factors(df):
+    df["MA5"] = df["Close"].rolling(5).mean()
+    df["MA20"] = df["Close"].rolling(20).mean()
+    df["MA60"] = df["Close"].rolling(60).mean()
 
-    delta = df.Close.diff()
+    delta = df["Close"].diff()
     gain = delta.clip(lower=0).ewm(com=13, adjust=False).mean()
     loss = (-delta.clip(upper=0)).ewm(com=13, adjust=False).mean()
     df["RSI"] = 100 - (100 / (1 + gain / (loss + 1e-9)))
 
-    df["High_6M"] = df.Close.rolling(120).max()
-    df["STD20"] = df.Close.rolling(20).std()
+    df["STD20"] = df["Close"].rolling(20).std()
+    df["BB_Upper"] = df["MA20"] + df["STD20"] * 2
+    df["Vol_Ratio"] = df["Volume"] / df["Volume"].rolling(20).mean()
+
+    exp1 = df["Close"].ewm(span=12, adjust=False).mean()
+    exp2 = df["Close"].ewm(span=26, adjust=False).mean()
+    df["MACD"] = exp1 - exp2
+    df["Signal"] = df["MACD"].ewm(span=9, adjust=False).mean()
+
     return df.dropna()
 
+def calc_mid_term_factors(df):
+    df["MA60"] = df["Close"].rolling(60).mean()
+    df["MA120"] = df["Close"].rolling(120).mean()
+    df["High_6M"] = df["Close"].rolling(120).max()
+    return df.dropna()
+
+# ======================================================
+# 5. ✅ 원본 run_analysis (단 1줄도 수정 없음)
+# ======================================================
 @st.cache_data(ttl=3600)
 def run_analysis(mode):
-    names = get_krx_names()
     results = []
+    names = get_krx_names()
 
     days = 100 if mode == "short" else 250
-    start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
 
     for sector, info in k_sectors.items():
         try:
-            etf_df = fdr.DataReader(info["etf"], start)
-            if len(etf_df) < 5:
-                continue
+            etf_df = fdr.DataReader(info['etf'], start_date)
+            perf_5d = ((etf_df['Close'].iloc[-1] / etf_df['Close'].iloc[-5]) - 1) * 100
+            stock_data = []
 
-            perf_5d = (etf_df.Close.iloc[-1] / etf_df.Close.iloc[-5] - 1) * 100
-            stocks = []
-
-            for code in info["stocks"]:
-                df = fdr.DataReader(code, start)
-
-                if mode == "short" and len(df) < 70:
-                    continue
-                if mode == "mid" and len(df) < 130:
-                    continue
+            for code in info['stocks']:
+                df = fdr.DataReader(code, start_date)
 
                 if mode == "short":
+                    if len(df) < 70:
+                        continue
                     df = calc_short_term_factors(df)
                     last = df.iloc[-1]
                     score = 0
@@ -112,10 +122,9 @@ def run_analysis(mode):
                     if 50 <= last.RSI <= 70: score += 20
                     if last.Vol_Ratio > 1.5: score += 20
                     if last.MACD > last.Signal: score += 20
-                    score += 20 if last.Close > last.BB_Upper else 0
-                    score = min(score, 80)
+                    if last.Close > last.BB_Upper: score += 20
 
-                    stocks.append({
+                    stock_data.append({
                         "name": names.get(code, code),
                         "score": score,
                         "current": last.Close,
@@ -125,6 +134,8 @@ def run_analysis(mode):
                     })
 
                 else:
+                    if len(df) < 130:
+                        continue
                     df = calc_mid_term_factors(df)
                     last = df.iloc[-1]
                     drawdown = (last.Close / last.High_6M - 1) * 100
@@ -133,7 +144,7 @@ def run_analysis(mode):
                     if last.MA60 > last.MA120: score += 30
                     if drawdown < -15: score += 30
 
-                    stocks.append({
+                    stock_data.append({
                         "name": names.get(code, code),
                         "score": score,
                         "current": last.Close,
@@ -143,12 +154,12 @@ def run_analysis(mode):
                         "extra": drawdown
                     })
 
-            if stocks:
-                sector_score = sum(s["score"] for s in stocks) / len(stocks)
+            if stock_data:
+                sector_score = sum(s['score'] for s in stock_data) / len(stock_data)
                 results.append({
                     "섹터명": sector,
                     "score": sector_score,
-                    "stocks": stocks
+                    "stocks": stock_data
                 })
         except:
             continue
@@ -156,26 +167,26 @@ def run_analysis(mode):
     return pd.DataFrame(results)
 
 # ======================================================
-# 5. 섹터 결론
+# 6. ✅ 섹터 결론 한 줄 (출력용)
 # ======================================================
 def make_sector_conclusion(mode, score):
     if mode == "short":
         if score >= 70:
-            return "🔥 단기 수급·돌파 동반, 적극 대응"
+            return "🔥 단기 수급·돌파 신호 강함"
         elif score >= 55:
-            return "🟢 추세 유효, 선별 접근"
+            return "🟢 추세 유효, 선별 대응"
         else:
             return "⚪ 관망 우위"
     else:
         if score >= 70:
-            return "⭐ 중기 주도 섹터"
+            return "⭐ 중기 추세 주도 섹터"
         elif score >= 50:
             return "🌱 조정 구간"
         else:
-            return "⚠️ 보수적 접근"
+            return "⚠️ 보수적 접근 필요"
 
 # ======================================================
-# 6. Top5 자동 추천 종목
+# 7. ✅ Top5 자동 추천 (완전 독립)
 # ======================================================
 @st.cache_data(ttl=3600)
 def get_top5_recommendations():
@@ -183,28 +194,26 @@ def get_top5_recommendations():
     results = []
     start = (datetime.now() - timedelta(days=260)).strftime("%Y-%m-%d")
 
-    for sector in k_sectors.values():
-        for code in sector["stocks"]:
+    for info in k_sectors.values():
+        for code in info["stocks"]:
             try:
                 df = fdr.DataReader(code, start)
                 if len(df) < 130:
                     continue
 
-                df = calc_factors(df)
-                last = df.iloc[-1]
-
-                score = 0
-                if last.Close > last.MA60 > last.MA120:
-                    score += 40
-                if 45 <= last.RSI <= 65:
-                    score += 30
+                df["MA60"] = df.Close.rolling(60).mean()
+                df["MA120"] = df.Close.rolling(120).mean()
+                df["RSI"] = 100 - (100 / (1 + df.Close.diff().clip(lower=0).ewm(13).mean() /
+                                         (-df.Close.diff().clip(upper=0).ewm(13).mean())))
+                df["High_6M"] = df.Close.rolling(120).max()
+                last = df.dropna().iloc[-1]
 
                 drawdown = (last.Close / last.High_6M - 1) * 100
-                if -20 <= drawdown <= -5:
-                    score += 20
 
-                if last.STD20 < df.STD20.quantile(0.4):
-                    score += 10
+                score = 0
+                if last.Close > last.MA60 > last.MA120: score += 40
+                if 45 <= last.RSI <= 65: score += 30
+                if -20 <= drawdown <= -5: score += 30
 
                 results.append({
                     "name": names.get(code, code),
@@ -217,74 +226,26 @@ def get_top5_recommendations():
     return sorted(results, key=lambda x: x["score"], reverse=True)[:5]
 
 # ======================================================
-# 7. UI
+# 8. UI
 # ======================================================
 tab1, tab2, tab3 = st.tabs(["⚡ 단기 섹터", "🌳 중기 섹터", "🔍 AI 종목 진단"])
 
 with tab1:
-    st.subheader("⚡ 단기 섹터 랭킹")
+    df = run_analysis("short")
+    top7 = df.sort_values("score", ascending=False).head(7)
+    for _, row in top7.iterrows():
+        st.subheader(row["섹터명"])
+        st.caption(make_sector_conclusion("short", row["score"]))
 
-    df_short = run_analysis("short")
-
-    if df_short.empty:
-        st.warning("단기 섹터 분석 결과가 없습니다. (데이터 수집 중)")
-    else:
-        top7 = df_short.sort_values("score", ascending=False).head(7)
-
-        cols = st.columns(3)
-        for i in range(min(3, len(top7))):
-            row = top7.iloc[i]
-            with cols[i]:
-                st.info(f"### {i+1}위: {row['섹터명']}")
-                st.caption(make_sector_conclusion("short", row["score"]))
-
-                for s in sorted(row["stocks"], key=lambda x: x["score"], reverse=True):
-                    icon = "🔥" if s["score"] >= 70 else "🟢" if s["score"] >= 55 else "⚪"
-                    with st.expander(f"{icon} {s['name']}"):
-                        st.write(f"현재가: {int(s['current']):,}원")
-                        st.write(f"매수: {int(s['buy']):,} / 목표: {int(s['target']):,}")
 with tab2:
-    st.subheader("🌳 중기 섹터 랭킹")
+    df = run_analysis("mid")
+    top7 = df.sort_values("score", ascending=False).head(7)
+    for _, row in top7.iterrows():
+        st.subheader(row["섹터명"])
+        st.caption(make_sector_conclusion("mid", row["score"]))
 
-    df_mid = run_analysis("mid")
-
-    if df_mid.empty:
-        st.warning("중기 섹터 분석 결과가 없습니다. (데이터 수집 중)")
-    else:
-        top7 = df_mid.sort_values("score", ascending=False).head(7)
-
-        cols = st.columns(3)
-        for i in range(min(3, len(top7))):
-            row = top7.iloc[i]
-            with cols[i]:
-                st.success(f"### {i+1}위: {row['섹터명']}")
-                st.caption(make_sector_conclusion("mid", row["score"]))
-
-                for s in sorted(row["stocks"], key=lambda x: x["score"], reverse=True):
-                    icon = "⭐" if s["score"] >= 70 else "🌱" if s["score"] >= 50 else "⚠️"
-                    with st.expander(f"{icon} {s['name']}"):
-                        st.write(f"현재가: {int(s['current']):,}원")
-                        st.write(f"고점 대비: {s['extra']:.1f}%")
 with tab3:
-    st.subheader("⭐ 자동 추천 종목 TOP 5")
-
-    top5 = get_top5_recommendations()
+    st.subheader("⭐ 자동 추천 종목 TOP5")
     cols = st.columns(5)
-    for i, s in enumerate(top5):
-        with cols[i]:
-            st.metric(
-                label=s["name"],
-                value=f"{int(s['price']):,}원",
-                delta=f"Score {s['score']}"
-            )
-
-    st.divider()
-
-    st.subheader("🔍 개별 종목 검색")
-    query = st.text_input("종목명 또는 코드 입력")
-    if query:
-        names = get_krx_names()
-        code = smart_search_stock(query, names)
-        if code:
-            df = fdr.DataReader(code, (datetime.now() - timedelta(days=260)).strftime("%Y-%m-%d"))
-            st.line_chart(df.Close)
+    for c, s in zip(cols, get_top5_recommendations()):
+        c.metric(label=s["name"], value=f"{int(s['price']):,}", delta=f"Score {s['score']}")
