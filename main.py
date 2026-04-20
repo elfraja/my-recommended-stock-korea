@@ -233,7 +233,7 @@ tab1, tab2, tab3 = st.tabs(["⚡ 단기 섹터", "🌳 중기 섹터", "🔍 AI 
 with tab1:
     df = run_analysis("short")
 
-    if df.empty or "score" not df.columns:
+    if df.empty or "score" not in df.columns:
         st.warning("단기 섹터 분석 결과가 없습니다. (조건 미충족)")
     else:
         top7 = df.sort_values("score", ascending=False).head(7)
@@ -246,7 +246,7 @@ with tab1:
 with tab2:
     df = run_analysis("mid")
 
-    if df.empty or "score" not df.columns:
+    if df.empty or "score" not in df.columns:
         st.warning("중기 섹터 분석 결과가 없습니다. (조건 미충족)")
     else:
         top7 = df.sort_values("score", ascending=False).head(7)
