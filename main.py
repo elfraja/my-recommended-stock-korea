@@ -8,7 +8,7 @@ import json
 import re
 
 # 1. 앱 설정
-st.set_page_config(page_title="K-증시 실전 매매 비서 V4", page_icon="📡", layout="wide")
+st.set_page_config(page_title="K-증시 실전 매매 비서 V5", page_icon="📡", layout="wide")
 
 # CSS 스타일 (블록형 UI 및 2x2 가격 카드 디자인 최적화)
 st.markdown("""
@@ -37,7 +37,7 @@ if "GEMINI_API_KEY" in st.secrets:
 else:
     GEMINI_READY = False
 
-# 3. 20대 핵심 테마
+# 3. 20대 핵심 테마 (ETF 맵핑 포함)
 k_sectors = {
     "반도체": {"etf": "091160", "stocks": ["005930", "000660", "042700"]},
     "2차전지소재": {"etf": "373550", "stocks": ["247540", "391060", "003670"]},
@@ -118,6 +118,7 @@ def run_full_analysis(mode):
                 last = df.iloc[-1]
                 curr = last['Close']
                 
+                # 핵심: 매수가격 및 손절/익절가 세팅
                 if mode == "short":
                     buy = curr if curr <= last['MA20'] else (curr + last['MA20']) / 2
                     stop = buy * 0.95
@@ -139,7 +140,7 @@ def run_full_analysis(mode):
 def render_stock_ui(s):
     st.markdown(f"""
     <div class="normal-card">
-        <div style="font-weight:bold; font-size:15px; color:#ffffff;">{s['icon']} {s['name']} <span style="font-size:11px;color:#8b949e;">{s['code']}</span></div>
+        <div style="font-weight:bold; font-size:15px;">{s['icon']} {s['name']} <span style="font-size:11px;color:#8b949e;">{s['code']}</span></div>
         <div class="price-box">
             <div class="price-item curr">현재<br>{int(s['curr']):,}</div>
             <div class="price-item buy">매수<br>{int(s['buy']):,}</div>
@@ -149,31 +150,30 @@ def render_stock_ui(s):
     </div>
     """, unsafe_allow_html=True)
 
-# 자체 알고리즘 폴백(Fallback) 함수
+# --- 🛡️ 자체 알고리즘 폴백 (Fallback) ---
 def get_fallback_insight(stats):
     curr = float(stats["현재가"].replace("원", "").replace(",", ""))
     ma60 = float(stats["MA60"].replace("원", "").replace(",", ""))
     rsi = float(stats["RSI"])
-    
-    trend = "상승 추세 (60일선 위 위치)" if curr >= ma60 else "하락 추세 (60일선 저항)"
-    energy = "단기 과매수(조정 주의)" if rsi >= 70 else "과매도(기술적 반등 기대)" if rsi <= 30 else "중립 및 방향성 탐색 구간"
+    trend = "상승 추세 (60일선 위)" if curr >= ma60 else "하락 추세 (60일선 아래)"
+    energy = "단기 과매수(조정 주의)" if rsi >= 70 else "과매도(기술적 반등 기대)" if rsi <= 30 else "중립 방향성 탐색"
     advice = "현재 추세가 살아있으므로 눌림목 분할 매수 접근이 유효합니다." if curr >= ma60 else "추세가 무너진 상태이므로 섣부른 매수보다 하방 지지 확인이 우선입니다."
     opinion = "매수 관점" if curr >= ma60 and rsi < 70 else "관망" if curr < ma60 else "분할 매도 (수익 실현)"
     
-    return f"⚠️ **AI 시스템 응답 지연으로 자체 알고리즘 분석을 제공합니다.**\n\n1. 📊 **현재 상황:** 주가는 {trend}에 있으며, 에너지는 {energy}입니다.\n2. 🎯 **매매 전략:** {advice}\n3. 💡 **종합 의견:** {opinion}"
+    return f"⚠️ **AI 응답 지연으로 시스템 알고리즘 분석을 제공합니다.**\n\n1. 📊 **현재 상황:** 주가는 {trend}에 있으며, 에너지는 {energy}입니다.\n2. 🎯 **매매 전략:** {advice}\n3. 💡 **종합 의견:** {opinion}"
 
 def get_ai_insight(name, stats):
     if not GEMINI_READY: 
         return get_fallback_insight(stats)
     try:
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        model = genai.GenerativeModel('gemini-1.5-flash')
         prompt = f"주식 전문가로서 '{name}'의 지표({str(stats)})를 보고 투자 인사이트를 3줄 요약해주세요."
         return model.generate_content(prompt).text
     except Exception:
         return get_fallback_insight(stats)
 
-# 5. UI 메인 (대시보드 블록형 레이아웃)
-tab1, tab2, tab3 = st.tabs(["⚡ 단기 스윙 (Top 7)", "🌳 중기 추세 (Top 7)", "🔍 AI 종목 분석 & 추천"])
+# 5. UI 메인 (대시보드 블록형 레이아웃 3 & 4)
+tab1, tab2, tab3 = st.tabs(["⚡ 단기 스윙 (Top 7)", "🌳 중기 추세 (Top 7)", "🔍 AI 종목 & ETF 추천"])
 
 with tab1:
     st.header("⚡ 단기 반등 모멘텀 Top 7")
@@ -190,7 +190,7 @@ with tab1:
                     for s in row['stocks']: 
                         render_stock_ui(s)
             
-            st.divider() # 상단/하단 구분선
+            st.divider() # 위/아래 구분선
             
             # 하단 4개 블록 렌더링
             bot4 = df_s.iloc[3:7]
@@ -228,16 +228,16 @@ with tab2:
                         render_stock_ui(s)
 
 with tab3:
-    st.header("🔍 정밀 분석 & 유망주 픽")
+    st.header("🔍 정밀 분석 & 유망 ETF/주식 픽")
     
-    st.subheader("💡 오늘의 단기 유망주 TOP 5")
-    if st.button("🪄 시장 유망주 5개 추천받기"):
-        with st.spinner("시장 트렌드를 분석하여 유망주를 선정 중입니다..."):
+    st.subheader("💡 오늘의 단기 유망주 & ETF TOP 5")
+    if st.button("🪄 시장 유망 종목 및 ETF 5개 추천받기"):
+        with st.spinner("트렌드 분석 및 유망 ETF/개별주 선정 중..."):
             is_ai_success = False
             if GEMINI_READY:
                 try:
-                    model = genai.GenerativeModel('gemini-2.5-flash')
-                    prompt = "한국 시장 단기 상승 유망 종목 5개를 추천해. 반드시 JSON 형식으로만: [{'rank':1, 'name':'종목명', 'code':'코드', 'reason':'이유'}, ...]"
+                    model = genai.GenerativeModel('gemini-1.5-flash')
+                    prompt = "한국 주식 시장 단기 상승 유망 종목과 관련 ETF를 포함하여 딱 5개를 추천해줘. 반드시 JSON 형식으로만: [{'rank':1, 'name':'종목명 또는 ETF명', 'code':'코드', 'reason':'이유'}, ...]"
                     res = model.generate_content(prompt).text
                     clean_res = re.sub(r'```json|```', '', res).strip()
                     recs = json.loads(clean_res)
@@ -245,17 +245,24 @@ with tab3:
                 except Exception:
                     is_ai_success = False
             
-            # AI 폴백 (AI 실패 시 자체 퀀트 추천)
+            # --- 🛡️ 자체 알고리즘 폴백 (ETF 1개 + 개별주 4개 자동생성) ---
             if not is_ai_success:
-                st.warning("⚠️ AI 응답 지연으로 자체 퀀트 알고리즘이 선정한 우량 종목을 제공합니다.")
+                st.warning("⚠️ AI 응답 지연으로 자체 퀀트 알고리즘이 선정한 우량 종목과 ETF를 제공합니다.")
                 recs = []
                 cached_df = run_full_analysis("short")
                 if not cached_df.empty:
+                    # 1위 섹터의 주도 ETF 강제 추천 추가
+                    best_sector = cached_df.iloc[0]
+                    etf_code = k_sectors[best_sector['sector']]['etf']
+                    recs.append({"rank": 1, "name": f"KODEX/TIGER {best_sector['sector']} 관련 ETF", "code": etf_code, "reason": f"{best_sector['sector']} 섹터 전반의 모멘텀 강세 (안정적 분산투자)"})
+                    
+                    # 나머지 4개는 섹터 내 우량주 추천
                     for _, row in cached_df.iterrows():
                         for s in row['stocks']:
                             if len(recs) < 5 and s['score'] > 50:
-                                recs.append({"rank": len(recs)+1, "name": s['name'], "code": s['code'], "reason": f"{row['sector']} 섹터 수급 우수 및 추세 호전"})
+                                recs.append({"rank": len(recs)+1, "name": s['name'], "code": s['code'], "reason": f"{row['sector']} 주도주로서 수급 우수 및 정배열 초입"})
 
+            # 결과 렌더링
             if recs:
                 cols = st.columns(5)
                 for idx, r in enumerate(recs):
@@ -268,7 +275,7 @@ with tab3:
     st.divider()
     
     st.subheader("📊 개별 종목 정밀 진단")
-    query = st.text_input("분석할 종목명 또는 코드를 입력하세요:", placeholder="예: 삼성전자, LGCNS, 005930")
+    query = st.text_input("분석할 종목명 또는 코드를 입력하세요:", placeholder="예: 삼성전자, LGCNS, 카카오페이, 005930")
     
     if query:
         names_dict = get_krx_names()
@@ -316,6 +323,6 @@ with tab3:
                         insight = get_ai_insight(stock_name, stats)
                         st.info(insight)
                 else:
-                    st.error("데이터가 부족합니다.")
+                    st.error("분석하기에 상장 기간이 너무 짧거나 데이터가 부족합니다.")
         else:
-            st.error("종목을 찾을 수 없습니다.")
+            st.error("입력하신 종목을 찾을 수 없습니다.")
