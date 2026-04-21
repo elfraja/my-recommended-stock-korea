@@ -167,7 +167,7 @@ def get_ai_insight(name, stats):
     if not GEMINI_READY: 
         return get_fallback_insight(stats)
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         prompt = f"주식 전문가로서 '{name}'의 지표({str(stats)})를 보고 투자 인사이트를 3줄 요약해주세요."
         return model.generate_content(prompt).text
     except Exception:
@@ -237,7 +237,7 @@ with tab3:
             is_ai_success = False
             if GEMINI_READY:
                 try:
-                    model = genai.GenerativeModel('gemini-1.5-flash')
+                    model = genai.GenerativeModel('gemini-2.5-flash')
                     prompt = "한국 주식 시장 단기 상승 유망 종목과 관련 ETF를 포함하여 딱 5개를 추천해줘. 반드시 JSON 형식으로만: [{'rank':1, 'name':'종목명 또는 ETF명', 'code':'코드', 'reason':'이유'}, ...]"
                     res = model.generate_content(prompt).text
                     clean_res = re.sub(r'```json|```', '', res).strip()
