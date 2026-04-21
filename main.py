@@ -139,7 +139,7 @@ def run_full_analysis(mode):
 def render_stock_ui(s):
     st.markdown(f"""
     <div class="normal-card">
-        <div style="font-weight:bold; font-size:15px;">{s['icon']} {s['name']} <span style="font-size:11px;color:#8b949e;">{s['code']}</span></div>
+        <div style="font-weight:bold; font-size:15px; color:#ffffff;">{s['icon']} {s['name']} <span style="font-size:11px;color:#8b949e;">{s['code']}</span></div>
         <div class="price-box">
             <div class="price-item curr">현재<br>{int(s['curr']):,}</div>
             <div class="price-item buy">매수<br>{int(s['buy']):,}</div>
