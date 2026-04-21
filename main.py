@@ -19,6 +19,7 @@ st.markdown("""
     
     /* 개별 종목 카드 */
     .normal-card { background: #0d1117; border: 1px solid #30363d; border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+    .stock-name {color: #ffffff;font-weight: bold;font-size: 15px;}
     
     /* 가격 박스 (좁은 세로 블록을 위해 2x2 배열로 변경) */
     .price-box { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-top: 10px; text-align: center; }
@@ -140,7 +141,7 @@ def run_full_analysis(mode):
 def render_stock_ui(s):
     st.markdown(f"""
     <div class="normal-card">
-        <div style="font-weight:bold; font-size:15px;">{s['icon']} {s['name']} <span style="font-size:11px;color:#8b949e;">{s['code']}</span></div>
+         <div class="stock-name">{s['icon']} {s['name']} <span style="font-size:11px;color:#8b949e;">{s['code']}</span></div>
         <div class="price-box">
             <div class="price-item curr">현재<br>{int(s['curr']):,}</div>
             <div class="price-item buy">매수<br>{int(s['buy']):,}</div>
