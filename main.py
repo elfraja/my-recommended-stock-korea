@@ -4,6 +4,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import difflib
 import google.generativeai as genai
+from openai import OpenAI # 추가된 부분: OpenAI 라이브러리 임포트
 import json
 import re
 
@@ -35,21 +36,33 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ───────────────────────────────────────────
-# 2. Gemini 설정
+# 2. 듀얼 AI 엔진 설정 (Gemini & OpenAI 하이브리드) - 수정됨
 # ───────────────────────────────────────────
 GEMINI_READY = False
-GEMINI_ERR   = ""
-try:
-    if "GEMINI_API_KEY" in st.secrets:
+OPENAI_READY = False
+AI_ERR_MSGS = []
+
+# Gemini 세팅
+if "GEMINI_API_KEY" in st.secrets:
+    try:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        # 실제 연결 테스트 (가벼운 호출)
         test_model = genai.GenerativeModel('gemini-2.5-flash')
         test_model.generate_content("ping")
         GEMINI_READY = True
-    else:
-        GEMINI_ERR = "Secrets에 GEMINI_API_KEY 키가 없습니다."
-except Exception as e:
-    GEMINI_ERR = f"Gemini 연결 실패: {str(e)}"
+    except Exception as e:
+        AI_ERR_MSGS.append(f"Gemini: {str(e)}")
+else:
+    AI_ERR_MSGS.append("Gemini 키 누락")
+
+# OpenAI 세팅
+if "OPENAI_API_KEY" in st.secrets:
+    try:
+        openai_client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+        OPENAI_READY = True
+    except Exception as e:
+        AI_ERR_MSGS.append(f"OpenAI: {str(e)}")
+else:
+    AI_ERR_MSGS.append("OpenAI 키 누락")
 
 # ───────────────────────────────────────────
 # 3. 섹터 데이터
@@ -279,7 +292,6 @@ def calc_trade_levels(last, mode):
     else:  # mid
         # 매수: 60일선 지지 확인 후 진입
         buy    = last['MA60']
-        # 익절: 6개월 고점 회복
         # 손절: 120일선 -3%, 단 반드시 현재가보다 낮아야 함
         stop   = min(last['MA120'] * 0.97, curr * 0.95)
         # 익절: 6개월 고점 회복 (원래 가치로 복귀)
@@ -407,12 +419,12 @@ def render_stock_ui(s):
     """, unsafe_allow_html=True)
 
 # ───────────────────────────────────────────
-# 13. 폴백 지표 해석 (AI 없을 때)
+# 13. 폴백 지표 해석 (get_ai_insight 이중화 적용) - 수정됨
 # ───────────────────────────────────────────
 def get_fallback_insight(stats):
     curr = float(stats["현재가"].replace("원","").replace(",",""))
     ma60 = float(stats["MA60"].replace("원","").replace(",",""))
-    rsi  = float(stats["RSI"])
+    rsi  = float(stats["RSI"][:4]) # 포맷된 문자열에서 실수로 변환 안전하게 수정
 
     trend  = "상승 추세 (60일선 위)" if curr >= ma60 else "하락 추세 (60일선 아래)"
     energy = ("단기 과매수 — 조정 주의" if rsi >= 70
@@ -426,18 +438,14 @@ def get_fallback_insight(stats):
                else "분할 매도 (수익 실현)")
 
     return (
-        f"⚠️ **시스템 알고리즘 분석 (AI 미연결)**\n\n"
+        f"⚠️ **시스템 알고리즘 분석 (AI 미연결 또는 응답 지연)**\n\n"
         f"1. 📊 **현재 상황:** 주가는 {trend}이며 에너지는 {energy}입니다.\n"
         f"2. 🎯 **매매 전략:** {advice}\n"
         f"3. 💡 **종합 의견:** {opinion}"
     )
 
 def get_ai_insight(name, stats):
-    if not GEMINI_READY:
-        return None, "GEMINI_API_KEY가 Secrets에 없습니다."
-    try:
-        model  = genai.GenerativeModel('gemini-2.5-flash')
-        prompt = f"""당신은 20년 경력의 한국 주식 전문 애널리스트입니다.
+    prompt = f"""당신은 20년 경력의 한국 주식 전문 애널리스트입니다.
 아래는 '{name}' 종목의 기술적 지표입니다:
 
 {chr(10).join(f"  - {k}: {v}" for k, v in stats.items())}
@@ -465,10 +473,33 @@ def get_ai_insight(name, stats):
 
 6. 💡 종합 의견: [강력매수 / 매수 / 분할매수 / 관망 / 매도] 중 하나 + 한 줄 근거
 """
-        return model.generate_content(prompt).text, None
-    except Exception as e:
-        return None, str(e)
+    
+    # 1순위: Gemini (버전 2.5로 수정하여 404 에러 해결)
+    if GEMINI_READY:
+        try:
+            model  = genai.GenerativeModel('gemini-2.5-flash')
+            return model.generate_content(prompt).text, None
+        except Exception as e:
+            pass # 실패 시 조용히 아래 OpenAI로 넘어감
 
+    # 2순위: OpenAI (최신 gpt-5.4-mini 적용)
+    if OPENAI_READY:
+        try:
+            response = openai_client.chat.completions.create(
+                model="gpt-5.4-mini",
+                messages=[
+                    {"role": "system", "content": "당신은 한국 주식 전문 애널리스트입니다."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7
+            )
+            return response.choices[0].message.content, None
+        except Exception as e:
+            pass
+
+    # 3순위: 둘 다 실패 시 자체 폴백 작동
+    return None, "모든 AI 엔진 접속 실패"
+    
 # ───────────────────────────────────────────
 # 14. Top5 추천 (폴백 포함)
 # ───────────────────────────────────────────
@@ -513,13 +544,17 @@ def get_top5_recs(cached_df):
     return recs
 
 # ───────────────────────────────────────────
-# 15. 탭 UI
+# 15. 탭 UI - 수정됨
 # ───────────────────────────────────────────
-# Gemini 연결 상태 상단 표시
-if GEMINI_READY:
-    st.success("🤖 Gemini AI 연결됨")
+# AI 엔진 상태 상단 표시 (하이브리드 알림)
+if GEMINI_READY and OPENAI_READY:
+    st.success("🤖 Hybrid AI 가동 중: 메인(Gemini) / 비상(OpenAI GPT)")
+elif GEMINI_READY:
+    st.info("🤖 AI 가동 중: Gemini (OpenAI 비상 엔진 미연결)")
+elif OPENAI_READY:
+    st.info("🤖 AI 가동 중: OpenAI GPT (Gemini 미연결)")
 else:
-    st.error(f"🔴 Gemini 미연결 — {GEMINI_ERR}")
+    st.error(f"🔴 AI 엔진 모두 연결 실패 — 퀀트 알고리즘 단독 모드 가동 중 | 오류: {', '.join(AI_ERR_MSGS)}")
 
 tab1, tab2, tab3 = st.tabs(["⚡ 단기 스윙 Top7", "🌳 중기 추세 Top7", "🔍 AI 종목 & ETF 추천"])
 
@@ -583,7 +618,7 @@ with tab2:
                 for s in row['stocks']:
                     render_stock_ui(s)
 
-# ─ 탭3: AI 진단 ─
+# ─ 탭3: AI 진단 - 하이브리드 로직 적용됨 ─
 with tab3:
     st.header("🔍 정밀 분석 & 유망 ETF/주식 픽")
 
@@ -592,26 +627,42 @@ with tab3:
     if st.button("🪄 시장 유망 종목 및 ETF 5개 추천받기"):
         with st.spinner("트렌드 분석 중..."):
             recs = None
-            if GEMINI_READY:
+            prompt_text = (
+                "한국 주식 시장에서 단기 반등이 기대되는 종목과 관련 ETF를 포함해 5개를 추천해주세요. "
+                "반드시 JSON 형식으로만 답하세요 (코드블록 없이 순수 JSON):\n"
+                '[{"rank":1,"name":"종목명","code":"코드","reason":"이유"},...]'
+            )
+
+            # 1순위: Gemini (버전 2.5로 수정)
+            if GEMINI_READY and not recs:
                 try:
                     model  = genai.GenerativeModel('gemini-2.5-flash')
-                    prompt = (
-                        "한국 주식 시장에서 단기 반등이 기대되는 종목과 관련 ETF를 포함해 5개를 추천해주세요. "
-                        "반드시 JSON 형식으로만 답하세요 (코드블록 없이 순수 JSON):\n"
-                        '[{"rank":1,"name":"종목명","code":"코드","reason":"이유"},...]'
-                    )
-                    raw   = model.generate_content(prompt).text
-                    clean = re.sub(r'```json|```', '', raw).strip()
-                    recs  = json.loads(clean)
+                    raw    = model.generate_content(prompt_text).text
+                    clean  = re.sub(r'```json|```', '', raw).strip()
+                    recs   = json.loads(clean)
                 except Exception:
                     recs = None
 
-            # 폴백: 자체 알고리즘
+            # 2순위: OpenAI (gpt-5.4-mini 적용)
+            if OPENAI_READY and not recs:
+                try:
+                    response = openai_client.chat.completions.create(
+                        model="gpt-5.4-mini",
+                        messages=[{"role": "user", "content": prompt_text}],
+                        temperature=0.7
+                    )
+                    raw    = response.choices[0].message.content
+                    clean  = re.sub(r'```json|```', '', raw).strip()
+                    recs   = json.loads(clean)
+                except Exception:
+                    recs = None
+
+            # 3순위: 폴백 (자체 알고리즘)
             if not recs:
-                st.warning("⚠️ AI 미연결 — 자체 퀀트 알고리즘으로 선정합니다.")
+                st.warning("⚠️ AI 미연결 또는 응답 지연 — 자체 퀀트 알고리즘으로 선정합니다.")
                 cached = run_full_analysis("short", TODAY)
                 recs   = get_top5_recs(cached)
-
+                
         if recs:
             cols = st.columns(5)
             for idx, r in enumerate(recs[:5]):
@@ -726,12 +777,12 @@ with tab3:
 
                 with col2:
                     st.subheader("🤖 AI 종목 분석 리포트")
-                    with st.spinner("Gemini AI 분석 중... (10~20초 소요)"):
+                    with st.spinner("Gemini/OpenAI 하이브리드 분석 중... (10~20초 소요)"):
                         ai_text, ai_err = get_ai_insight(stock_name, stats)
                     if ai_text:
                         st.info(ai_text)
                     else:
-                        st.warning(f"⚠️ AI 연결 실패: {ai_err}")
+                        st.warning(f"⚠️ {ai_err}")
                         st.info(get_fallback_insight(stats))
 
 # ───────────────────────────────────────────
