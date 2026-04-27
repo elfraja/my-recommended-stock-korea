@@ -122,40 +122,42 @@ def smart_search_stock(query, names_dict):
 def calc_indicators(df):
     df = df.copy()
 
-    # 이동평균
-    df['MA5']   = df['Close'].rolling(5).mean()
-    df['MA20']  = df['Close'].rolling(20).mean()
-    df['MA60']  = df['Close'].rolling(60).mean()
-    df['MA120'] = df['Close'].rolling(120).mean()
+    # 이동평균 (min_periods로 초반 NaN 최소화)
+    df['MA5']   = df['Close'].rolling(5,   min_periods=3).mean()
+    df['MA20']  = df['Close'].rolling(20,  min_periods=10).mean()
+    df['MA60']  = df['Close'].rolling(60,  min_periods=30).mean()
+    df['MA120'] = df['Close'].rolling(120, min_periods=60).mean()
 
-    # RSI (14일 기준 EWM)
+    # RSI
     delta = df['Close'].diff()
     gain  = delta.clip(lower=0).ewm(com=13, adjust=False).mean()
     loss  = (-delta.clip(upper=0)).ewm(com=13, adjust=False).mean()
     df['RSI'] = 100 - (100 / (1 + gain / (loss + 1e-10)))
 
     # 볼린저밴드 (20일)
-    std20          = df['Close'].rolling(20).std()
+    std20          = df['Close'].rolling(20, min_periods=10).std()
     df['BB_Upper'] = df['MA20'] + std20 * 2
     df['BB_Lower'] = df['MA20'] - std20 * 2
     df['BB_Pct']   = (df['Close'] - df['BB_Lower']) / (df['BB_Upper'] - df['BB_Lower'] + 1e-10)
 
     # MACD (12/26/9)
-    ema12        = df['Close'].ewm(span=12, adjust=False).mean()
-    ema26        = df['Close'].ewm(span=26, adjust=False).mean()
-    df['MACD']   = ema12 - ema26
-    df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    ema12           = df['Close'].ewm(span=12, adjust=False).mean()
+    ema26           = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD']      = ema12 - ema26
+    df['Signal']    = df['MACD'].ewm(span=9, adjust=False).mean()
     df['MACD_Hist'] = df['MACD'] - df['Signal']
 
     # 거래량 비율
-    df['Vol_Ratio'] = df['Volume'] / (df['Volume'].rolling(20).mean() + 1e-10)
+    df['Vol_Ratio'] = df['Volume'] / (df['Volume'].rolling(20, min_periods=5).mean() + 1e-10)
 
-    # 52주 고점 / 6개월 고점
-    df['High_52W'] = df['Close'].rolling(252).max()
-    df['High_6M']  = df['Close'].rolling(120).max()
-    df['Low_6M']   = df['Close'].rolling(120).min()
+    # 6개월 고점/저점 (52주 제거 - 데이터 너무 많이 소모)
+    df['High_6M'] = df['Close'].rolling(120, min_periods=20).max()
+    df['Low_6M']  = df['Close'].rolling(120, min_periods=20).min()
 
-    return df.dropna()
+    # 전체 dropna 대신 필수 컬럼만 체크
+    required = ['MA5','MA20','MA60','MA120','RSI','BB_Upper','BB_Lower',
+                'BB_Pct','MACD','Signal','MACD_Hist','Vol_Ratio','High_6M']
+    return df.dropna(subset=required)
 
 # ───────────────────────────────────────────
 # 8. 단기 스코어링 (반등 목적에 맞게 전면 재설계)
@@ -292,18 +294,27 @@ def run_full_analysis(mode, cache_date):
 
     for sec, info in k_sectors.items():
         try:
-            etf_df  = fdr.DataReader(info['etf'], start)
-            if len(etf_df) < 10: continue
+            etf_df = fdr.DataReader(info['etf'], start)
+            # ETF 데이터 최소 25일 필요
+            if etf_df is None or len(etf_df) < 25:
+                continue
 
-            perf_5d  = ((etf_df['Close'].iloc[-1] / etf_df['Close'].iloc[-5])  - 1) * 100
-            perf_20d = ((etf_df['Close'].iloc[-1] / etf_df['Close'].iloc[-20]) - 1) * 100
+            # iloc 접근 전 길이 방어 (데이터 부족 시 가능한 최대 범위 사용)
+            n = len(etf_df)
+            perf_5d  = ((etf_df['Close'].iloc[-1] / etf_df['Close'].iloc[-min(5,  n-1)]) - 1) * 100
+            perf_20d = ((etf_df['Close'].iloc[-1] / etf_df['Close'].iloc[-min(20, n-1)]) - 1) * 100
 
             stocks = []
             for code in info['stocks']:
                 try:
                     raw = fdr.DataReader(code, start)
-                    if len(raw) < 130: continue
-                    df   = calc_indicators(raw)
+                    # dropna() 후 데이터 감소를 고려해 여유있게 체크
+                    if raw is None or len(raw) < 90:
+                        continue
+                    df = calc_indicators(raw)
+                    # 지표 계산 후 유효 행 재확인
+                    if len(df) < 30:
+                        continue
                     last = df.iloc[-1]
                     curr = last['Close']
 
@@ -413,7 +424,7 @@ def get_ai_insight(name, stats):
     if not GEMINI_READY:
         return get_fallback_insight(stats)
     try:
-        model  = genai.GenerativeModel('gemini-2.5-flash')
+        model  = genai.GenerativeModel('gemini-1.5-flash')
         prompt = (
             f"한국 주식 전문 애널리스트로서 '{name}'의 지표({str(stats)})를 분석해주세요.\n"
             f"형식:\n"
@@ -545,7 +556,7 @@ with tab3:
             recs = None
             if GEMINI_READY:
                 try:
-                    model  = genai.GenerativeModel('gemini-2.5-flash')
+                    model  = genai.GenerativeModel('gemini-1.5-flash')
                     prompt = (
                         "한국 주식 시장에서 단기 반등이 기대되는 종목과 관련 ETF를 포함해 5개를 추천해주세요. "
                         "반드시 JSON 형식으로만 답하세요 (코드블록 없이 순수 JSON):\n"
