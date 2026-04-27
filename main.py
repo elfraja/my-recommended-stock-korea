@@ -127,14 +127,27 @@ def normalize_string(s):
 
 def smart_search_stock(query, names_dict):
     if query.isdigit() and query in names_dict: return query
+    
     q = normalize_string(query)
     norm = {c: normalize_string(n) for c, n in names_dict.items()}
+    
+    # 1순위: 이름이 '정확히' 일치하는 종목을 가장 먼저 찾습니다.
     for c, n in norm.items():
-        if q in n or n in q: return c
+        if q == n: 
+            return c
+            
+    # 2순위: 검색어가 종목명 안에 포함되어 있는 경우를 찾습니다. (예: "페이" 검색 -> "카카오페이" 반환)
+    for c, n in norm.items():
+        if q in n: 
+            return c
+            
+    # 3순위: 비슷한 글자(오타)를 찾아줍니다.
     hits = difflib.get_close_matches(q, list(norm.values()), n=1, cutoff=0.5)
     if hits:
         for c, n in norm.items():
-            if n == hits[0]: return c
+            if n == hits[0]: 
+                return c
+                
     return None
 
 # ───────────────────────────────────────────
