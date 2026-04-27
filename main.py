@@ -777,16 +777,30 @@ with tab3:
                     st.write(f"{rr_color} **{rr_ratio:.1f}** (1.5 이상 = 투자 매력)")
 
                 with col2:
-                    st.subheader("🤖 AI 종목 분석 리포트")
+                    st.subheader("📊 시스템 퀀트 요약 (빠른 진단)")
+                    # 1. 종목 검색 시 대기 시간 없이 즉시 퀀트 알고리즘 결과를 띄웁니다.
+                    st.info(get_fallback_insight(stats))
                     
-                    # 1. 기본 리포트 출력
-                    with st.spinner("Gemini/OpenAI 하이브리드 분석 중... (10~20초 소요)"):
-                        ai_text, ai_err = get_ai_insight(stock_name, stats)
+                    st.markdown("---")
+                    st.subheader("🤖 AI 애널리스트 심층 진단")
                     
-                    if ai_text:
-                        st.info(ai_text)
+                    # 해당 종목에 대한 AI 리포트를 유지하기 위한 고유 세션 키 생성
+                    ai_state_key = f"ai_report_{target_code}"
+                    
+                    # 2. 버튼을 누르면 그제야 AI 호출을 시작합니다.
+                    if st.button(f"🪄 '{stock_name}' 정밀 분석 요청 (Gemini/GPT)"):
+                        with st.spinner("하이브리드 AI 엔진이 분석 중입니다... (10~20초 소요)"):
+                            ai_text, ai_err = get_ai_insight(stock_name, stats)
+                            if ai_text:
+                                # 분석이 완료되면 결과를 세션 스테이트(메모리)에 저장합니다.
+                                st.session_state[ai_state_key] = ai_text
+                            else:
+                                st.error(f"⚠️ {ai_err}")
+                                
+                    # 3. 세션 메모리에 AI 리포트가 저장되어 있다면 화면에 출력하고 추가 질문을 받습니다.
+                    if ai_state_key in st.session_state:
+                        st.success(st.session_state[ai_state_key])
                         
-                        # --- 💡 추가: 심화 분석 요청 버튼 영역 ---
                         st.markdown("---")
                         st.markdown("#### 💡 AI에게 추가 분석 요청하기")
                         btn_col1, btn_col2 = st.columns(2)
@@ -794,21 +808,19 @@ with tab3:
                         with btn_col1:
                             if st.button("📊 시나리오별 대응표 짜줘"):
                                 with st.spinner("대응표 작성 중..."):
-                                    # 대응표용 커스텀 프롬프트 전송
                                     p = f"앞서 분석한 '{stock_name}' 종목에 대해 '매수/매도 시나리오별 대응표'를 마크다운 표 형식으로 깔끔하게 작성해줘."
                                     followup_text, _ = get_ai_insight(stock_name, stats, custom_prompt=p)
                                     if followup_text:
-                                        st.success(followup_text)
+                                        st.info(followup_text)
                                         
                         with btn_col2:
                             if st.button("📈 지지선/저항선 요약해줘"):
                                 with st.spinner("요약 작성 중..."):
-                                    # 요약용 커스텀 프롬프트 전송
                                     p = f"앞서 분석한 '{stock_name}' 종목에 대해 '지지선과 저항선 차트형 요약'을 작성해줘. 현재가: {stats['현재가']}, 볼밴하단: {stats['볼밴하단']}, 볼밴상단: {stats['볼밴상단']} 참고해."
                                     followup_text, _ = get_ai_insight(stock_name, stats, custom_prompt=p)
                                     if followup_text:
-                                        st.success(followup_text)
-                                        
+                                        st.info(followup_text)
+                        
                     else:
                         st.warning(f"⚠️ {ai_err}")
                         st.info(get_fallback_insight(stats))
