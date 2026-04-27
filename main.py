@@ -43,7 +43,7 @@ try:
     if "GEMINI_API_KEY" in st.secrets:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
         # 실제 연결 테스트 (가벼운 호출)
-        test_model = genai.GenerativeModel('gemini-2.5-flash-preview-04-17')
+        test_model = genai.GenerativeModel('gemini-2.5-flash')
         test_model.generate_content("ping")
         GEMINI_READY = True
     else:
@@ -436,7 +436,7 @@ def get_ai_insight(name, stats):
     if not GEMINI_READY:
         return None, "GEMINI_API_KEY가 Secrets에 없습니다."
     try:
-        model  = genai.GenerativeModel('gemini-2.5-flash-preview-04-17')
+        model  = genai.GenerativeModel('gemini-2.5-flash')
         prompt = (
             f"한국 주식 전문 애널리스트로서 '{name}'의 지표({str(stats)})를 분석해주세요.\n"
             f"형식:\n"
@@ -574,7 +574,7 @@ with tab3:
             recs = None
             if GEMINI_READY:
                 try:
-                    model  = genai.GenerativeModel('gemini-2.5-flash-preview-04-17')
+                    model  = genai.GenerativeModel('gemini-2.5-flash')
                     prompt = (
                         "한국 주식 시장에서 단기 반등이 기대되는 종목과 관련 ETF를 포함해 5개를 추천해주세요. "
                         "반드시 JSON 형식으로만 답하세요 (코드블록 없이 순수 JSON):\n"
