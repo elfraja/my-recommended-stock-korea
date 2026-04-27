@@ -261,18 +261,19 @@ def calc_trade_levels(last, mode):
     curr = last['Close']
 
     if mode == "short":
-        # 매수: 현재가 또는 BB 하단 중 유리한 쪽
+        # 매수: 현재가 또는 BB 하단 중 낮은 쪽 (유리한 진입가)
         buy    = min(curr, last['BB_Lower'] * 1.01)
-        # 손절: 60일선 또는 -5% 중 큰 값 (더 보수적)
-        stop   = max(last['MA60'] * 0.98, curr * 0.95)
-        # 익절: BB 상단 (단기 오버슈팅 목표)
+        # 익절: BB 상단 (단기 오버슈팅 목표), 최소 +4% 보장
         target = last['BB_Upper'] if last['BB_Upper'] > curr * 1.04 else curr * 1.07
+        # 손절: 반드시 현재가보다 낮게 — 매수가 -5% 또는 BB 하단 -2% 중 낮은 값
+        stop   = min(buy * 0.95, last['BB_Lower'] * 0.98)
 
     else:  # mid
         # 매수: 60일선 지지 확인 후 진입
         buy    = last['MA60']
-        # 손절: 120일선 -3% (중기 추세 붕괴 기준)
-        stop   = last['MA120'] * 0.97
+        # 익절: 6개월 고점 회복
+        # 손절: 120일선 -3%, 단 반드시 현재가보다 낮아야 함
+        stop   = min(last['MA120'] * 0.97, curr * 0.95)
         # 익절: 6개월 고점 회복 (원래 가치로 복귀)
         target = last['High_6M']
 
@@ -324,6 +325,9 @@ def run_full_analysis(mode, cache_date):
                         score, signals = score_mid(last)
 
                     buy, target, stop = calc_trade_levels(last, mode)
+                    # 안전장치: 익절은 반드시 현재가 위, 손절은 반드시 현재가 아래
+                    target   = max(target, curr * 1.03)
+                    stop     = min(stop,   curr * 0.97)
                     upside   = (target - curr) / curr * 100
                     downside = (stop   - curr) / curr * 100
                     icon = "🔥" if score >= 70 else ("🟢" if score >= 45 else "⚪")
@@ -422,9 +426,9 @@ def get_fallback_insight(stats):
 
 def get_ai_insight(name, stats):
     if not GEMINI_READY:
-        return get_fallback_insight(stats)
+        return None, "GEMINI_API_KEY가 Secrets에 없습니다."
     try:
-        model  = genai.GenerativeModel('gemini-1.5-flash')
+        model  = genai.GenerativeModel('gemini-2.5-flash-preview-04-17')
         prompt = (
             f"한국 주식 전문 애널리스트로서 '{name}'의 지표({str(stats)})를 분석해주세요.\n"
             f"형식:\n"
@@ -433,9 +437,9 @@ def get_ai_insight(name, stats):
             f"3. ⚠️ 리스크 요인 (1줄)\n"
             f"4. 💡 종합 의견: [강력매수/매수/관망/매도] 중 하나"
         )
-        return model.generate_content(prompt).text
-    except Exception:
-        return get_fallback_insight(stats)
+        return model.generate_content(prompt).text, None
+    except Exception as e:
+        return None, str(e)
 
 # ───────────────────────────────────────────
 # 14. Top5 추천 (폴백 포함)
@@ -556,7 +560,7 @@ with tab3:
             recs = None
             if GEMINI_READY:
                 try:
-                    model  = genai.GenerativeModel('gemini-1.5-flash')
+                    model  = genai.GenerativeModel('gemini-2.5-flash-preview-04-17')
                     prompt = (
                         "한국 주식 시장에서 단기 반등이 기대되는 종목과 관련 ETF를 포함해 5개를 추천해주세요. "
                         "반드시 JSON 형식으로만 답하세요 (코드블록 없이 순수 JSON):\n"
@@ -650,9 +654,14 @@ with tab3:
 
                 with col2:
                     st.subheader("🤖 종목 인사이트 리포트")
-                    with st.spinner("분석 중..."):
-                        insight = get_ai_insight(stock_name, stats)
-                    st.info(insight)
+                    with st.spinner("Gemini AI 분석 중..."):
+                        ai_text, ai_err = get_ai_insight(stock_name, stats)
+                    if ai_text:
+                        st.info(ai_text)
+                    else:
+                        # 에러 원인을 화면에 표시 후 폴백 분석 제공
+                        st.warning(f"⚠️ AI 연결 실패: {ai_err}")
+                        st.info(get_fallback_insight(stats))
 
 # ───────────────────────────────────────────
 # 16. 에러 로그
