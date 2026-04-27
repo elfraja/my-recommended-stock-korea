@@ -421,21 +421,19 @@ def render_stock_ui(s):
 # ───────────────────────────────────────────
 # 13. 폴백 지표 해석 (get_ai_insight 이중화 적용) - 수정됨
 # ───────────────────────────────────────────
+# ───────────────────────────────────────────
+# 13. 하이브리드 AI 분석 & 폴백 (버튼 대응용으로 업그레이드)
+# ───────────────────────────────────────────
+
 def get_fallback_insight(stats):
     curr = float(stats["현재가"].replace("원","").replace(",",""))
     ma60 = float(stats["MA60"].replace("원","").replace(",",""))
-    rsi  = float(stats["RSI"][:4]) # 포맷된 문자열에서 실수로 변환 안전하게 수정
+    rsi  = float(stats["RSI"][:4]) 
 
     trend  = "상승 추세 (60일선 위)" if curr >= ma60 else "하락 추세 (60일선 아래)"
-    energy = ("단기 과매수 — 조정 주의" if rsi >= 70
-              else "과매도 — 기술적 반등 기대" if rsi <= 30
-              else "중립 — 방향성 탐색 중")
-    advice = ("추세가 살아있으므로 눌림목 분할 매수 접근이 유효합니다."
-              if curr >= ma60
-              else "추세가 무너진 상태이므로 하방 지지 확인이 우선입니다.")
-    opinion = ("매수 관점" if curr >= ma60 and rsi < 70
-               else "관망" if curr < ma60
-               else "분할 매도 (수익 실현)")
+    energy = ("단기 과매수 — 조정 주의" if rsi >= 70 else "과매도 — 기술적 반등 기대" if rsi <= 30 else "중립 — 방향성 탐색 중")
+    advice = ("추세가 살아있으므로 눌림목 분할 매수 접근이 유효합니다." if curr >= ma60 else "추세가 무너진 상태이므로 하방 지지 확인이 우선입니다.")
+    opinion = ("매수 관점" if curr >= ma60 and rsi < 70 else "관망" if curr < ma60 else "분할 매도 (수익 실현)")
 
     return (
         f"⚠️ **시스템 알고리즘 분석 (AI 미연결 또는 응답 지연)**\n\n"
@@ -444,8 +442,13 @@ def get_fallback_insight(stats):
         f"3. 💡 **종합 의견:** {opinion}"
     )
 
-def get_ai_insight(name, stats):
-    prompt = f"""당신은 20년 경력의 한국 주식 전문 애널리스트입니다.
+# custom_prompt 파라미터를 추가했습니다.
+def get_ai_insight(name, stats, custom_prompt=None):
+    if custom_prompt:
+        prompt = custom_prompt # 버튼을 눌렀을 때는 우리가 지정한 질문을 보냄
+    else:
+        # 기본 검색 시에는 원래 쓰던 6가지 항목 프롬프트를 보냄
+        prompt = f"""당신은 20년 경력의 한국 주식 전문 애널리스트입니다.
 아래는 '{name}' 종목의 기술적 지표입니다:
 
 {chr(10).join(f"  - {k}: {v}" for k, v in stats.items())}
@@ -453,36 +456,22 @@ def get_ai_insight(name, stats):
 다음 형식으로 상세 분석 리포트를 작성해주세요:
 
 1. 📊 현재 상황
-   - 추세: 이동평균선 배열과 현재 위치를 해석
-   - 모멘텀: RSI·MACD·거래량으로 에너지 평가
-
 2. 📉 52주 관점
-   - 고점/저점 대비 현재 위치의 의미
-   - 현재가 수준이 역사적으로 매력적인지 여부
-
 3. 🎯 매매 전략 (구체적 수치 포함)
-   - 단기 (1~2주): 1차 매수가 / 2차 매수가 / 익절 목표
-   - 중기 (1~3개월): 핵심 지지선 / 목표가 / 손절 기준
-
 4. ⚠️ 리스크 요인
-   - 기술적 리스크 1가지
-   - 수급/모멘텀 리스크 1가지
-
 5. 📊 리스크/리워드 비율
-   - 예상 수익률 vs 손실률 계산 후 투자 매력도 평가
-
 6. 💡 종합 의견: [강력매수 / 매수 / 분할매수 / 관망 / 매도] 중 하나 + 한 줄 근거
 """
     
-    # 1순위: Gemini (버전 2.5로 수정하여 404 에러 해결)
+    # 1순위: Gemini
     if GEMINI_READY:
         try:
             model  = genai.GenerativeModel('gemini-2.5-flash')
             return model.generate_content(prompt).text, None
         except Exception as e:
-            pass # 실패 시 조용히 아래 OpenAI로 넘어감
+            pass
 
-    # 2순위: OpenAI (최신 gpt-5.4-mini 적용)
+    # 2순위: OpenAI (gpt-5.4-mini)
     if OPENAI_READY:
         try:
             response = openai_client.chat.completions.create(
@@ -497,7 +486,6 @@ def get_ai_insight(name, stats):
         except Exception as e:
             pass
 
-    # 3순위: 둘 다 실패 시 자체 폴백 작동
     return None, "모든 AI 엔진 접속 실패"
     
 # ───────────────────────────────────────────
@@ -777,10 +765,37 @@ with tab3:
 
                 with col2:
                     st.subheader("🤖 AI 종목 분석 리포트")
+                    
+                    # 1. 기본 리포트 출력
                     with st.spinner("Gemini/OpenAI 하이브리드 분석 중... (10~20초 소요)"):
                         ai_text, ai_err = get_ai_insight(stock_name, stats)
+                    
                     if ai_text:
                         st.info(ai_text)
+                        
+                        # --- 💡 추가: 심화 분석 요청 버튼 영역 ---
+                        st.markdown("---")
+                        st.markdown("#### 💡 AI에게 추가 분석 요청하기")
+                        btn_col1, btn_col2 = st.columns(2)
+                        
+                        with btn_col1:
+                            if st.button("📊 시나리오별 대응표 짜줘"):
+                                with st.spinner("대응표 작성 중..."):
+                                    # 대응표용 커스텀 프롬프트 전송
+                                    p = f"앞서 분석한 '{stock_name}' 종목에 대해 '매수/매도 시나리오별 대응표'를 마크다운 표 형식으로 깔끔하게 작성해줘."
+                                    followup_text, _ = get_ai_insight(stock_name, stats, custom_prompt=p)
+                                    if followup_text:
+                                        st.success(followup_text)
+                                        
+                        with btn_col2:
+                            if st.button("📈 지지선/저항선 요약해줘"):
+                                with st.spinner("요약 작성 중..."):
+                                    # 요약용 커스텀 프롬프트 전송
+                                    p = f"앞서 분석한 '{stock_name}' 종목에 대해 '지지선과 저항선 차트형 요약'을 작성해줘. 현재가: {stats['현재가']}, 볼밴하단: {stats['볼밴하단']}, 볼밴상단: {stats['볼밴상단']} 참고해."
+                                    followup_text, _ = get_ai_insight(stock_name, stats, custom_prompt=p)
+                                    if followup_text:
+                                        st.success(followup_text)
+                                        
                     else:
                         st.warning(f"⚠️ {ai_err}")
                         st.info(get_fallback_insight(stats))
