@@ -646,7 +646,7 @@ with tab3:
 # ───────────────────────────────────────────
 # 16. 에러 로그
 # ───────────────────────────────────────────
-errs = st.session_state.get("errs", [])Q
+errs = st.session_state.get("errs", [])
 if errs:
     with st.expander(f"⚠️ 수집 실패 항목 ({len(errs)}건)", expanded=False):
         for e in errs[-20:]:
