@@ -37,11 +37,19 @@ st.markdown("""
 # ───────────────────────────────────────────
 # 2. Gemini 설정
 # ───────────────────────────────────────────
-if "GEMINI_API_KEY" in st.secrets:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    GEMINI_READY = True
-else:
-    GEMINI_READY = False
+GEMINI_READY = False
+GEMINI_ERR   = ""
+try:
+    if "GEMINI_API_KEY" in st.secrets:
+        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+        # 실제 연결 테스트 (가벼운 호출)
+        test_model = genai.GenerativeModel('gemini-2.5-flash-preview-04-17')
+        test_model.generate_content("ping")
+        GEMINI_READY = True
+    else:
+        GEMINI_ERR = "Secrets에 GEMINI_API_KEY 키가 없습니다."
+except Exception as e:
+    GEMINI_ERR = f"Gemini 연결 실패: {str(e)}"
 
 # ───────────────────────────────────────────
 # 3. 섹터 데이터
@@ -487,6 +495,12 @@ def get_top5_recs(cached_df):
 # ───────────────────────────────────────────
 # 15. 탭 UI
 # ───────────────────────────────────────────
+# Gemini 연결 상태 상단 표시
+if GEMINI_READY:
+    st.success("🤖 Gemini AI 연결됨")
+else:
+    st.error(f"🔴 Gemini 미연결 — {GEMINI_ERR}")
+
 tab1, tab2, tab3 = st.tabs(["⚡ 단기 스윙 Top7", "🌳 중기 추세 Top7", "🔍 AI 종목 & ETF 추천"])
 
 TODAY = today_str()  # 장마감 기준 날짜 (캐시 키)
