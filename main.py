@@ -437,14 +437,34 @@ def get_ai_insight(name, stats):
         return None, "GEMINI_API_KEY가 Secrets에 없습니다."
     try:
         model  = genai.GenerativeModel('gemini-2.5-flash')
-        prompt = (
-            f"한국 주식 전문 애널리스트로서 '{name}'의 지표({str(stats)})를 분석해주세요.\n"
-            f"형식:\n"
-            f"1. 📊 현재 상황 (1-2줄)\n"
-            f"2. 🎯 매수 전략 (1-2줄)\n"
-            f"3. ⚠️ 리스크 요인 (1줄)\n"
-            f"4. 💡 종합 의견: [강력매수/매수/관망/매도] 중 하나"
-        )
+        prompt = f"""당신은 20년 경력의 한국 주식 전문 애널리스트입니다.
+아래는 '{name}' 종목의 기술적 지표입니다:
+
+{chr(10).join(f"  - {k}: {v}" for k, v in stats.items())}
+
+다음 형식으로 상세 분석 리포트를 작성해주세요:
+
+1. 📊 현재 상황
+   - 추세: 이동평균선 배열과 현재 위치를 해석
+   - 모멘텀: RSI·MACD·거래량으로 에너지 평가
+
+2. 📉 52주 관점
+   - 고점/저점 대비 현재 위치의 의미
+   - 현재가 수준이 역사적으로 매력적인지 여부
+
+3. 🎯 매매 전략 (구체적 수치 포함)
+   - 단기 (1~2주): 1차 매수가 / 2차 매수가 / 익절 목표
+   - 중기 (1~3개월): 핵심 지지선 / 목표가 / 손절 기준
+
+4. ⚠️ 리스크 요인
+   - 기술적 리스크 1가지
+   - 수급/모멘텀 리스크 1가지
+
+5. 📊 리스크/리워드 비율
+   - 예상 수익률 vs 손실률 계산 후 투자 매력도 평가
+
+6. 💡 종합 의견: [강력매수 / 매수 / 분할매수 / 관망 / 매도] 중 하나 + 한 줄 근거
+"""
         return model.generate_content(prompt).text, None
     except Exception as e:
         return None, str(e)
@@ -648,32 +668,69 @@ with tab3:
                     "perf_5d":  0,
                 }
 
+                # 추가 지표 계산
+                perf_5d  = ((df['Close'].iloc[-1] / df['Close'].iloc[-min(6,  len(df)-1)]) - 1) * 100
+                perf_20d = ((df['Close'].iloc[-1] / df['Close'].iloc[-min(21, len(df)-1)]) - 1) * 100
+                high_52w = df['Close'].rolling(min(252, len(df)), min_periods=20).max().iloc[-1]
+                low_52w  = df['Close'].rolling(min(252, len(df)), min_periods=20).min().iloc[-1]
+                dist_52h = (curr - high_52w) / high_52w * 100
+                dist_52l = (curr - low_52w)  / low_52w  * 100
+                macd_dir = "상승중" if last['MACD_Hist'] > 0 else "하락중"
+                bb_upper = last['BB_Upper']
+                bb_lower = last['BB_Lower']
+                rr_ratio = abs(upside / downside) if downside != 0 else 0
+
                 stats = {
-                    "현재가": f"{int(curr):,}원",
-                    "RSI":    f"{last['RSI']:.1f}",
-                    "MA20":   f"{int(last['MA20']):,}원",
-                    "MA60":   f"{int(last['MA60']):,}원",
-                    "MA120":  f"{int(last['MA120']):,}원",
-                    "볼밴위치": f"{last['BB_Pct']*100:.0f}%",
-                    "MACD":   f"{last['MACD']:.3f}",
-                    "거래량비율": f"{last['Vol_Ratio']:.2f}x",
+                    "현재가":         f"{int(curr):,}원",
+                    "5일수익률":      f"{perf_5d:+.1f}%",
+                    "20일수익률":     f"{perf_20d:+.1f}%",
+                    "RSI":            f"{last['RSI']:.1f} (30이하=과매도 / 70이상=과매수)",
+                    "MACD":          f"{last['MACD']:.3f} ({macd_dir})",
+                    "MACD히스토그램": f"{last['MACD_Hist']:.3f}",
+                    "볼밴상단":       f"{int(bb_upper):,}원",
+                    "볼밴하단":       f"{int(bb_lower):,}원",
+                    "볼밴위치":       f"{last['BB_Pct']*100:.0f}% (0%=하단/100%=상단)",
+                    "거래량비율":     f"{last['Vol_Ratio']:.2f}x (1.0=평균)",
+                    "MA20":          f"{int(last['MA20']):,}원",
+                    "MA60":          f"{int(last['MA60']):,}원",
+                    "MA120":         f"{int(last['MA120']):,}원",
+                    "52주고점":       f"{int(high_52w):,}원 (현재 {dist_52h:+.1f}%)",
+                    "52주저점":       f"{int(low_52w):,}원 (현재 {dist_52l:+.1f}%)",
+                    "매수가":         f"{int(buy):,}원",
+                    "익절목표":       f"{int(target):,}원 ({upside:+.1f}%)",
+                    "손절기준":       f"{int(stop):,}원 ({downside:+.1f}%)",
+                    "리스크리워드":   f"{rr_ratio:.1f} (1.5 이상이면 투자 매력)",
                 }
 
                 col1, col2 = st.columns([1, 1.2])
                 with col1:
                     st.subheader(f"📈 {stock_name} 매매 가이드")
                     render_stock_ui(s_data)
-                    st.write(f"**RSI:** {stats['RSI']}  |  **볼밴위치:** {stats['볼밴위치']}  |  **거래량비율:** {stats['거래량비율']}")
-                    st.write(f"**MA20:** {stats['MA20']}  |  **MA60:** {stats['MA60']}  |  **MA120:** {stats['MA120']}")
+
+                    st.markdown("**📊 주요 지표**")
+                    st.write(f"RSI: **{last['RSI']:.1f}** | 볼밴위치: **{last['BB_Pct']*100:.0f}%** | 거래량: **{last['Vol_Ratio']:.2f}x**")
+                    st.write(f"MACD: **{last['MACD']:.3f}** ({'📈 상승' if last['MACD_Hist'] > 0 else '📉 하락'})")
+                    st.write(f"MA20: **{int(last['MA20']):,}** | MA60: **{int(last['MA60']):,}** | MA120: **{int(last['MA120']):,}**")
+
+                    st.markdown("**📅 수익률**")
+                    p5_color  = "🟢" if perf_5d  >= 0 else "🔴"
+                    p20_color = "🟢" if perf_20d >= 0 else "🔴"
+                    st.write(f"5일: {p5_color} **{perf_5d:+.1f}%** | 20일: {p20_color} **{perf_20d:+.1f}%**")
+
+                    st.markdown("**📉 52주 위치**")
+                    st.write(f"고점대비: **{dist_52h:+.1f}%** | 저점대비: **{dist_52l:+.1f}%**")
+
+                    st.markdown("**⚖️ 리스크/리워드**")
+                    rr_color = "🟢" if rr_ratio >= 1.5 else ("🟡" if rr_ratio >= 1.0 else "🔴")
+                    st.write(f"{rr_color} **{rr_ratio:.1f}** (1.5 이상 = 투자 매력)")
 
                 with col2:
-                    st.subheader("🤖 종목 인사이트 리포트")
-                    with st.spinner("Gemini AI 분석 중..."):
+                    st.subheader("🤖 AI 종목 분석 리포트")
+                    with st.spinner("Gemini AI 분석 중... (10~20초 소요)"):
                         ai_text, ai_err = get_ai_insight(stock_name, stats)
                     if ai_text:
                         st.info(ai_text)
                     else:
-                        # 에러 원인을 화면에 표시 후 폴백 분석 제공
                         st.warning(f"⚠️ AI 연결 실패: {ai_err}")
                         st.info(get_fallback_insight(stats))
 
